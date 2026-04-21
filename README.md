@@ -1,97 +1,116 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# HS New Mobile
 
-# Getting Started
+Android React Native app for parachutist monitoring with BLE ingestion, offline queueing, AI risk detection, and MQTT synchronization to web services.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Implemented Scope
 
-## Step 1: Start Metro
+- Wrist wearable to phone link through BLE notifications.
+- Two packet headers configurable in Settings (hex):
+	- ESP packet header
+	- Parachute packet header
+- Offline-first local queue in SQLite.
+- Online synchronization over MQTT when internet is available.
+- On-device safety analysis:
+	- dangerous situation detection
+	- uncontrolled fall
+	- excessive rotation
+	- lack of movement
+	- physiological anomalies
+	- risk scoring and automatic alert queueing
+- Mock/real data switch in Settings.
+- Graphs for ESP telemetry history:
+	- temperature
+	- cpu load
+	- voltage
+	- current now
+	- battery percentage
+- Debugging tools:
+	- manual packet replay from hex input
+	- log export via share sheet
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## Added Parachute Parameter
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+Altitude was added as an extra key parameter. Combined with vertical speed and g-force, it improves dangerous behavior context and impact risk interpretation.
+
+## Packet Structure
+
+This app expects both packet types to follow:
+
+header bytes + 2-byte payload length + UTF-8 JSON payload
+
+The header bytes are configured in Settings.
+
+## Parachute Payload Schema
+
+The parachute payload schema currently used is:
+
+- chuteOpened: boolean
+- bodyPosition: stable | tilted-left | tilted-right | head-down | unstable
+- stressLevel: number
+- bodyTemperature: number
+- bloodOxygen: number
+- heartRate: number
+- verticalSpeed: number
+- rotationRate: number
+- movementIndex: number
+- altitude: number
+- gForce: number
+- batteryPercentage: number
+- timestamp: ISO string
+
+## MQTT Message Contract
+
+Telemetry topic (configured in Settings):
+
+```json
+{
+	"kind": "esp | parachute",
+	"createdAt": "2026-04-21T12:00:00.000Z",
+	"source": "mobile",
+	"payload": {"...": "..."}
+}
+```
+
+Alert topic:
+
+configuredTopic + /alerts
+
+```json
+{
+	"kind": "alert",
+	"createdAt": "2026-04-21T12:00:00.000Z",
+	"source": "mobile",
+	"payload": {
+		"risk": {"...": "..."},
+		"parachute": {"...": "..."},
+		"esp": {"...": "..."}
+	}
+}
+```
+
+## Run
+
+1. Install dependencies:
 
 ```sh
-# Using npm
+npm install
+```
+
+2. Start Metro:
+
+```sh
 npm start
-
-# OR using Yarn
-yarn start
 ```
 
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
+3. Run Android:
 
 ```sh
-# Using npm
 npm run android
-
-# OR using Yarn
-yarn android
 ```
 
-### iOS
+## Notes
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- BLE defaults are set in Settings for service and characteristic UUID and can be edited.
+- App uses SQLite queueing to avoid data loss while offline.
+- Background sync attempts run periodically and can also be triggered manually.
+- For stable React Native tooling, Node 20.19.4+ is recommended.
