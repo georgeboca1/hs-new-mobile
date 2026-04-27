@@ -12,9 +12,18 @@ export async function loadSettings(): Promise<AppSettings> {
 
   try {
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const legacyCharacteristic = (parsed as Partial<AppSettings> & {bleCharacteristicUuid?: string}).bleCharacteristicUuid;
+    const mergedSchemas = {
+      esp: parsed.packetParameterSchemas?.esp ?? DEFAULT_SETTINGS.packetParameterSchemas.esp,
+      parachute:
+        parsed.packetParameterSchemas?.parachute ?? DEFAULT_SETTINGS.packetParameterSchemas.parachute,
+    };
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      bleTelemetryUuid: parsed.bleTelemetryUuid ?? legacyCharacteristic ?? DEFAULT_SETTINGS.bleTelemetryUuid,
+      packetParameterSchemas: mergedSchemas,
     };
   } catch {
     return DEFAULT_SETTINGS;

@@ -9,8 +9,43 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {DEFAULT_ESP_PACKET_PARAMETERS, DEFAULT_PARACHUTE_PACKET_PARAMETERS} from '../config/defaults';
 import {useTelemetryStore} from '../store/useTelemetryStore';
 import {colors} from '../theme/colors';
+import {MockParameterType, PacketParameterDefinition} from '../types/telemetry';
+
+const PARAMETER_TYPES: MockParameterType[] = ['number', 'integer', 'boolean', 'string', 'enum', 'isoDate'];
+
+function createParameterDraft(type: MockParameterType = 'number'): PacketParameterDefinition {
+  return {
+    id: `param-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+    name: '',
+    type,
+    enumValues: '',
+  };
+}
+
+function sanitizeSchema(parameters: PacketParameterDefinition[]): PacketParameterDefinition[] {
+  const seen = new Set<string>();
+
+  return parameters
+    .map(parameter => ({
+      ...parameter,
+      name: parameter.name.trim(),
+      enumValues: parameter.enumValues?.trim() ?? '',
+    }))
+    .filter(parameter => {
+      if (!parameter.name) {
+        return false;
+      }
+      const key = parameter.name.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
 
 export function SettingsScreen(): React.JSX.Element {
   const {
@@ -31,7 +66,11 @@ export function SettingsScreen(): React.JSX.Element {
   const [parachuteHeader, setParachuteHeader] = useState('C3D4');
   const [useMockData, setUseMockData] = useState(true);
   const [bleServiceUuid, setBleServiceUuid] = useState('');
-  const [bleCharacteristicUuid, setBleCharacteristicUuid] = useState('');
+  const [bleTelemetryUuid, setBleTelemetryUuid] = useState('');
+  const [bleHealthUuid, setBleHealthUuid] = useState('');
+  const [bleDebugJsonUuid, setBleDebugJsonUuid] = useState('');
+  const [espPacketParameters, setEspPacketParameters] = useState<PacketParameterDefinition[]>([]);
+  const [parachutePacketParameters, setParachutePacketParameters] = useState<PacketParameterDefinition[]>([]);
   const [replayHex, setReplayHex] = useState('');
 
   useEffect(() => {
@@ -48,8 +87,50 @@ export function SettingsScreen(): React.JSX.Element {
     setParachuteHeader(settings.parachutePacketHeaderHex);
     setUseMockData(settings.useMockData);
     setBleServiceUuid(settings.bleServiceUuid);
-    setBleCharacteristicUuid(settings.bleCharacteristicUuid);
+    setBleTelemetryUuid(settings.bleTelemetryUuid);
+    setBleHealthUuid(settings.bleHealthUuid);
+    setBleDebugJsonUuid(settings.bleDebugJsonUuid);
+    setEspPacketParameters(settings.packetParameterSchemas.esp);
+    setParachutePacketParameters(settings.packetParameterSchemas.parachute);
   }, [settings]);
+
+  const updateParameter = (
+    kind: 'esp' | 'parachute',
+    id: string,
+    patch: Partial<PacketParameterDefinition>,
+  ) => {
+    const setter = kind === 'esp' ? setEspPacketParameters : setParachutePacketParameters;
+    setter(list => list.map(item => (item.id === id ? {...item, ...patch} : item)));
+  };
+
+  const removeParameter = (kind: 'esp' | 'parachute', id: string) => {
+    const setter = kind === 'esp' ? setEspPacketParameters : setParachutePacketParameters;
+    setter(list => list.filter(item => item.id !== id));
+  };
+
+  const addParameter = (kind: 'esp' | 'parachute') => {
+    const setter = kind === 'esp' ? setEspPacketParameters : setParachutePacketParameters;
+    setter(list => [...list, createParameterDraft()]);
+  };
+
+  const cycleParameterType = (kind: 'esp' | 'parachute', id: string) => {
+    const setter = kind === 'esp' ? setEspPacketParameters : setParachutePacketParameters;
+    setter(list =>
+      list.map(item => {
+        if (item.id !== id) {
+          return item;
+        }
+
+        const currentIndex = PARAMETER_TYPES.indexOf(item.type);
+        const nextType = PARAMETER_TYPES[(currentIndex + 1) % PARAMETER_TYPES.length];
+        return {
+          ...item,
+          type: nextType,
+          enumValues: nextType === 'enum' ? item.enumValues ?? '' : '',
+        };
+      }),
+    );
+  };
 
   const saveAll = async () => {
     const portValue = Number(mqttPort);
@@ -63,6 +144,9 @@ export function SettingsScreen(): React.JSX.Element {
       return;
     }
 
+    const normalizedEspSchema = sanitizeSchema(espPacketParameters);
+    const normalizedParachuteSchema = sanitizeSchema(parachutePacketParameters);
+
     await updateSettings({
       mqttHost: mqttHost.trim(),
       mqttPort: portValue,
@@ -73,10 +157,24 @@ export function SettingsScreen(): React.JSX.Element {
       parachutePacketHeaderHex: parachuteHeader.trim(),
       useMockData,
       bleServiceUuid: bleServiceUuid.trim(),
-      bleCharacteristicUuid: bleCharacteristicUuid.trim(),
+      bleTelemetryUuid: bleTelemetryUuid.trim(),
+      bleHealthUuid: bleHealthUuid.trim(),
+      bleDebugJsonUuid: bleDebugJsonUuid.trim(),
+      packetParameterSchemas: {
+        esp: normalizedEspSchema,
+        parachute: normalizedParachuteSchema,
+      },
     });
 
+    setEspPacketParameters(normalizedEspSchema);
+    setParachutePacketParameters(normalizedParachuteSchema);
+
     Alert.alert('Saved', 'Settings were updated.');
+  };
+
+  const resetPacketSchemaDefaults = () => {
+    setEspPacketParameters(DEFAULT_ESP_PACKET_PARAMETERS.map(parameter => ({...parameter})));
+    setParachutePacketParameters(DEFAULT_PARACHUTE_PACKET_PARAMETERS.map(parameter => ({...parameter})));
   };
 
   const onReplay = async () => {
@@ -188,9 +286,25 @@ export function SettingsScreen(): React.JSX.Element {
         />
         <TextInput
           style={styles.input}
-          value={bleCharacteristicUuid}
-          onChangeText={setBleCharacteristicUuid}
-          placeholder="Characteristic UUID"
+          value={bleTelemetryUuid}
+          onChangeText={setBleTelemetryUuid}
+          placeholder="Telemetry characteristic UUID"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="characters"
+        />
+        <TextInput
+          style={styles.input}
+          value={bleHealthUuid}
+          onChangeText={setBleHealthUuid}
+          placeholder="Health characteristic UUID"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="characters"
+        />
+        <TextInput
+          style={styles.input}
+          value={bleDebugJsonUuid}
+          onChangeText={setBleDebugJsonUuid}
+          placeholder="Debug JSON characteristic UUID"
           placeholderTextColor={colors.textMuted}
           autoCapitalize="characters"
         />
@@ -224,12 +338,80 @@ export function SettingsScreen(): React.JSX.Element {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Parachute Packet Schema</Text>
-        <Text style={styles.schemaLine}>chuteOpened: boolean</Text>
-        <Text style={styles.schemaLine}>bodyPosition: stable | tilted-left | tilted-right | head-down | unstable</Text>
-        <Text style={styles.schemaLine}>stressLevel, bodyTemperature, bloodOxygen, heartRate</Text>
-        <Text style={styles.schemaLine}>verticalSpeed, rotationRate, movementIndex</Text>
-        <Text style={styles.schemaLine}>altitude (added key parameter), gForce, batteryPercentage, timestamp</Text>
+        <Text style={styles.cardTitle}>Mock Packet Parameters</Text>
+        <Text style={styles.hint}>
+          Add, remove, and type packet parameters used during mock telemetry generation.
+        </Text>
+
+        <Text style={styles.sectionTitle}>ESP packet</Text>
+        {espPacketParameters.map(parameter => (
+          <View key={parameter.id} style={styles.parameterRow}>
+            <TextInput
+              style={styles.input}
+              value={parameter.name}
+              onChangeText={value => updateParameter('esp', parameter.id, {name: value})}
+              placeholder="Parameter name"
+              placeholderTextColor={colors.textMuted}
+            />
+            <View style={styles.parameterControls}>
+              <Pressable style={styles.typeButton} onPress={() => cycleParameterType('esp', parameter.id)}>
+                <Text style={styles.buttonText}>Type: {parameter.type}</Text>
+              </Pressable>
+              <Pressable style={styles.removeButton} onPress={() => removeParameter('esp', parameter.id)}>
+                <Text style={styles.buttonText}>Remove</Text>
+              </Pressable>
+            </View>
+            {parameter.type === 'enum' && (
+              <TextInput
+                style={styles.input}
+                value={parameter.enumValues}
+                onChangeText={value => updateParameter('esp', parameter.id, {enumValues: value})}
+                placeholder="Enum values (comma-separated)"
+                placeholderTextColor={colors.textMuted}
+              />
+            )}
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => addParameter('esp')}>
+          <Text style={styles.buttonText}>Add ESP Parameter</Text>
+        </Pressable>
+
+        <Text style={styles.sectionTitle}>Parachute packet</Text>
+        {parachutePacketParameters.map(parameter => (
+          <View key={parameter.id} style={styles.parameterRow}>
+            <TextInput
+              style={styles.input}
+              value={parameter.name}
+              onChangeText={value => updateParameter('parachute', parameter.id, {name: value})}
+              placeholder="Parameter name"
+              placeholderTextColor={colors.textMuted}
+            />
+            <View style={styles.parameterControls}>
+              <Pressable style={styles.typeButton} onPress={() => cycleParameterType('parachute', parameter.id)}>
+                <Text style={styles.buttonText}>Type: {parameter.type}</Text>
+              </Pressable>
+              <Pressable style={styles.removeButton} onPress={() => removeParameter('parachute', parameter.id)}>
+                <Text style={styles.buttonText}>Remove</Text>
+              </Pressable>
+            </View>
+            {parameter.type === 'enum' && (
+              <TextInput
+                style={styles.input}
+                value={parameter.enumValues}
+                onChangeText={value => updateParameter('parachute', parameter.id, {enumValues: value})}
+                placeholder="Enum values (comma-separated)"
+                placeholderTextColor={colors.textMuted}
+              />
+            )}
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => addParameter('parachute')}>
+          <Text style={styles.buttonText}>Add Parachute Parameter</Text>
+        </Pressable>
+
+        <Pressable style={styles.typeButton} onPress={resetPacketSchemaDefaults}>
+          <Text style={styles.buttonText}>Reset Parameter Defaults</Text>
+        </Pressable>
       </View>
 
       <View style={styles.card}>
@@ -317,9 +499,36 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
-  schemaLine: {
-    color: colors.textSecondary,
-    lineHeight: 18,
+  sectionTitle: {
+    color: colors.neonGlow,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  parameterRow: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: 10,
+    gap: 8,
+    backgroundColor: colors.inputBackground,
+  },
+  parameterControls: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  typeButton: {
+    flex: 1,
+    borderRadius: 10,
+    backgroundColor: colors.neonSecondary,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  removeButton: {
+    borderRadius: 10,
+    backgroundColor: '#992525',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   logRow: {
     borderBottomWidth: StyleSheet.hairlineWidth,

@@ -85,8 +85,13 @@ async function ingestTelemetry(kind: TelemetryKind, payload: EspData | Parachute
 }
 
 async function runSingleMockCycle(): Promise<void> {
-  await ingestTelemetry('esp', generateMockEspData());
-  await ingestTelemetry('parachute', generateMockParachuteData());
+  const settings = useTelemetryStore.getState().settings;
+  if (!settings) {
+    return;
+  }
+
+  await ingestTelemetry('esp', generateMockEspData(settings.packetParameterSchemas.esp));
+  await ingestTelemetry('parachute', generateMockParachuteData(settings.packetParameterSchemas.parachute));
 }
 
 export const useTelemetryStore = create<TelemetryState>((set, get) => ({

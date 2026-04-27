@@ -3,6 +3,16 @@ import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useTelemetryStore} from '../store/useTelemetryStore';
 import {colors} from '../theme/colors';
 
+function displayValue(value: unknown): string | number {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  return '-';
+}
+
 function Row({label, value}: {label: string; value: string | number}) {
   return (
     <View style={styles.row}>
@@ -22,6 +32,20 @@ export function DashboardScreen(): React.JSX.Element {
     mqttLastSyncAt,
     triggerSync,
   } = useTelemetryStore();
+
+  const parachuteParameters = settings?.packetParameterSchemas.parachute ?? [];
+
+  const parachuteRows = latestParachute
+    ? parachuteParameters
+        .map(parameter => {
+          const key = parameter.name.trim();
+          return {
+            key,
+            value: key ? latestParachute[key] : undefined,
+          };
+        })
+        .filter(row => Boolean(row.key))
+    : [];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -47,17 +71,11 @@ export function DashboardScreen(): React.JSX.Element {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Parachute + AI Safety</Text>
         {latestParachute ? (
-          <>
-            <Row label="Parachute" value={latestParachute.chuteOpened ? 'Opened' : 'Closed'} />
-            <Row label="Body position" value={latestParachute.bodyPosition} />
-            <Row label="Heart rate" value={`${latestParachute.heartRate} bpm`} />
-            <Row label="Stress level" value={`${latestParachute.stressLevel.toFixed(2)} %`} />
-            <Row label="SpO2" value={`${latestParachute.bloodOxygen.toFixed(2)} %`} />
-            <Row label="Vertical speed" value={`${latestParachute.verticalSpeed.toFixed(2)} m/s`} />
-            <Row label="Rotation" value={`${latestParachute.rotationRate.toFixed(2)} deg/s`} />
-            <Row label="Altitude" value={`${latestParachute.altitude.toFixed(2)} m`} />
-            <Row label="G-force" value={`${latestParachute.gForce.toFixed(2)} g`} />
-          </>
+          parachuteRows.length > 0 ? (
+            parachuteRows.map(row => <Row key={row.key} label={row.key} value={displayValue(row.value)} />)
+          ) : (
+            <Text style={styles.emptyText}>No parachute parameters are configured.</Text>
+          )
         ) : (
           <Text style={styles.emptyText}>No parachute data yet.</Text>
         )}

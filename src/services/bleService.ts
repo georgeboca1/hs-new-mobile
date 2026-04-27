@@ -39,7 +39,43 @@ async function requestAndroidPermissions(): Promise<boolean> {
   );
 }
 
-function handleCharacteristic(
+function selectDevice(device: Device, settings: AppSettings): boolean {
+  const deviceName = device.name?.toLowerCase() ?? '';
+  const localName = device.localName?.toLowerCase() ?? '';
+  const serviceMatch =
+    device.serviceUUIDs?.some(uuid => uuid.toLowerCase() === settings.bleServiceUuid.toLowerCase()) ?? false;
+
+  return Boolean(deviceName || localName || serviceMatch);
+}
+
+function getConfiguredCharacteristics(settings: AppSettings): string[] {
+  return [settings.bleTelemetryUuid, settings.bleHealthUuid, settings.bleDebugJsonUuid]
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+async function hasConfiguredNotificationTargets(device: Device, settings: AppSettings): Promise<boolean> {
+  const serviceUUID = settings.bleServiceUuid.toLowerCase();
+  const characteristicUUIDs = getConfiguredCharacteristics(settings);
+
+  try {
+    const services = await device.services();
+    const matchingService = services.find(service => service.uuid.toLowerCase() === serviceUUID);
+
+    if (!matchingService) {
+      return false;
+    }
+
+    const characteristics = await device.characteristicsForService(serviceUUID);
+    return characteristicUUIDs.every(uuid =>
+      characteristics.some(characteristic => characteristic.uuid.toLowerCase() === uuid),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function handleCharacteristicValue(
   characteristic: Characteristic,
   settings: AppSettings,
   onPacket: PacketCallback,
@@ -54,16 +90,6 @@ function handleCharacteristic(
   carry = parsed.remaining;
 
   parsed.packets.forEach(packet => onPacket(packet));
-}
-
-function selectDevice(device: Device, settings: AppSettings): boolean {
-  const deviceName = device.name?.toLowerCase() ?? '';
-  const localName = device.localName?.toLowerCase() ?? '';
-  const hasEspName = deviceName.includes('esp') || localName.includes('esp');
-  const serviceMatch =
-    device.serviceUUIDs?.some(uuid => uuid.toLowerCase() === settings.bleServiceUuid.toLowerCase()) ?? false;
-
-  return hasEspName || serviceMatch;
 }
 
 export async function startBleIngestion(
@@ -81,6 +107,7 @@ export async function startBleIngestion(
 
   return new Promise(resolve => {
     let settled = false;
+    let connecting = false;
 
     const finish = (result: boolean) => {
       if (settled) {
@@ -111,35 +138,63 @@ export async function startBleIngestion(
         return;
       }
 
-      if (!scannedDevice || !selectDevice(scannedDevice, settings)) {
+      if (connecting || !scannedDevice || !selectDevice(scannedDevice, settings)) {
         return;
       }
 
-      manager.stopDeviceScan();
+      connecting = true;
 
       try {
         currentDevice = await scannedDevice.connect();
         await currentDevice.discoverAllServicesAndCharacteristics();
 
-        monitorSub = currentDevice.monitorCharacteristicForService(
-          settings.bleServiceUuid,
-          settings.bleCharacteristicUuid,
-          (monitorError, characteristic) => {
+        const hasTarget = await hasConfiguredNotificationTargets(currentDevice, settings);
+        if (!hasTarget) {
+          onLog(
+            'error',
+            'BLE device does not expose all configured characteristics',
+            `${settings.bleServiceUuid}/${getConfiguredCharacteristics(settings).join(',')}`,
+          );
+          await currentDevice.cancelConnection();
+          currentDevice = null;
+          connecting = false;
+          return;
+        }
+
+        const connectedDevice = currentDevice;
+        if (!connectedDevice) {
+          onLog('error', 'BLE connection lost before monitors were created');
+          connecting = false;
+          finish(false);
+          return;
+        }
+
+        manager.stopDeviceScan();
+
+        const monitorSubscriptions = getConfiguredCharacteristics(settings).map(characteristicUuid =>
+          connectedDevice.monitorCharacteristicForService(settings.bleServiceUuid, characteristicUuid, (monitorError, characteristic) => {
             if (monitorError) {
-              onLog('error', 'BLE monitor error', String(monitorError));
+              onLog('error', 'BLE monitor error', `${characteristicUuid}: ${String(monitorError)}`);
               return;
             }
 
             if (characteristic) {
-              handleCharacteristic(characteristic, settings, onPacket);
+              handleCharacteristicValue(characteristic, settings, onPacket);
             }
-          },
+          }),
         );
+
+        monitorSub = {
+          remove: () => {
+            monitorSubscriptions.forEach(subscription => subscription.remove());
+          },
+        };
 
         onLog('info', 'BLE connected', currentDevice.id);
         finish(true);
       } catch (connectionError) {
         onLog('error', 'BLE connection failed', String(connectionError));
+        connecting = false;
         finish(false);
       }
     });

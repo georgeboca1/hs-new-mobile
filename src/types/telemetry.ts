@@ -10,6 +10,7 @@ export interface EspData {
   currentTotal: number;
   batteryLife: string;
   batteryPercentage: number;
+  [key: string]: string | number | boolean;
 }
 
 export interface ParachuteData {
@@ -26,6 +27,21 @@ export interface ParachuteData {
   altitude: number;
   gForce: number;
   batteryPercentage: number;
+  [key: string]: string | number | boolean;
+}
+
+export type MockParameterType = 'number' | 'integer' | 'boolean' | 'string' | 'enum' | 'isoDate';
+
+export interface PacketParameterDefinition {
+  id: string;
+  name: string;
+  type: MockParameterType;
+  enumValues?: string;
+}
+
+export interface PacketParameterSchemas {
+  esp: PacketParameterDefinition[];
+  parachute: PacketParameterDefinition[];
 }
 
 export interface RiskAssessment {
@@ -57,7 +73,10 @@ export interface AppSettings {
   parachutePacketHeaderHex: string;
   useMockData: boolean;
   bleServiceUuid: string;
-  bleCharacteristicUuid: string;
+  bleTelemetryUuid: string;
+  bleHealthUuid: string;
+  bleDebugJsonUuid: string;
+  packetParameterSchemas: PacketParameterSchemas;
 }
 
 export interface QueueRow {

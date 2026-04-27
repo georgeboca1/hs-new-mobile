@@ -5,6 +5,32 @@ import {useTelemetryStore} from '../store/useTelemetryStore';
 import {EspData} from '../types/telemetry';
 import {colors} from '../theme/colors';
 
+const CHART_COLORS = ['#C63BFF', '#E87BFF', '#9A35FF', '#7E2CFF', '#D95FFF', '#6A8BFF', '#26D7AE'];
+
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+  return fallback;
+}
+
+function displayValue(value: unknown): string | number {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  return '-';
+}
+
 function Row({label, value}: {label: string; value: string | number}) {
   return (
     <View style={styles.row}>
@@ -88,13 +114,13 @@ function MetricChart({
   unit: string;
   color: string;
   history: EspData[];
-  selector: (value: EspData) => number;
+  selector: (value: EspData) => unknown;
   width: number;
 }) {
   const data = useMemo(
     () =>
       history.slice(-30).map((item, index) => ({
-        value: Number(selector(item).toFixed(2)),
+        value: Number(asNumber(selector(item)).toFixed(2)),
         label: index % 6 === 0 ? `${index}` : '',
       })),
     [history, selector],
@@ -128,21 +154,37 @@ function MetricChart({
 export function GraphsScreen(): React.JSX.Element {
   const history = useTelemetryStore(state => state.espHistory);
   const latestEsp = useTelemetryStore(state => state.latestEsp);
+  const settings = useTelemetryStore(state => state.settings);
   const {width} = useWindowDimensions();
+
+  const espParameters = useMemo(
+    () =>
+      (settings?.packetParameterSchemas.esp ?? [])
+        .map(parameter => ({
+          ...parameter,
+          name: parameter.name.trim(),
+        }))
+        .filter(parameter => Boolean(parameter.name)),
+    [settings],
+  );
+
+  const numericParameters = useMemo(
+    () => espParameters.filter(parameter => parameter.type === 'number' || parameter.type === 'integer'),
+    [espParameters],
+  );
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>ESP Telemetry</Text>
         {latestEsp ? (
-          <>
-            <Row label="Temperature" value={`${latestEsp.temperature.toFixed(2)} C`} />
-            <Row label="CPU load" value={`${latestEsp.cpuLoad.toFixed(2)} %`} />
-            <Row label="Voltage" value={`${latestEsp.voltage.toFixed(2)} V`} />
-            <Row label="Current now" value={`${latestEsp.currentNow.toFixed(2)} A`} />
-            <Row label="Battery" value={`${latestEsp.batteryPercentage.toFixed(2)} %`} />
-            <Row label="Signal" value={`${latestEsp.rssi} dBm`} />
-          </>
+          espParameters.length > 0 ? (
+            espParameters.map(parameter => (
+              <Row key={parameter.id} label={parameter.name} value={displayValue(latestEsp[parameter.name])} />
+            ))
+          ) : (
+            <Text style={styles.empty}>No ESP parameters are configured.</Text>
+          )
         ) : (
           <Text style={styles.empty}>No ESP data yet.</Text>
         )}
@@ -150,50 +192,23 @@ export function GraphsScreen(): React.JSX.Element {
 
       <Text style={styles.header}>ESP Value History</Text>
 
-      <MetricChart
-        title="Temperature"
-        unit="C"
-        color="#C63BFF"
-        history={history}
-        selector={value => value.temperature}
-        width={width - 74}
-      />
-
-      <MetricChart
-        title="CPU load"
-        unit="%"
-        color="#E87BFF"
-        history={history}
-        selector={value => value.cpuLoad}
-        width={width - 74}
-      />
-
-      <MetricChart
-        title="Voltage"
-        unit="V"
-        color="#9A35FF"
-        history={history}
-        selector={value => value.voltage}
-        width={width - 74}
-      />
-
-      <MetricChart
-        title="Current now"
-        unit="A"
-        color="#7E2CFF"
-        history={history}
-        selector={value => value.currentNow}
-        width={width - 74}
-      />
-
-      <MetricChart
-        title="Battery percentage"
-        unit="%"
-        color="#D95FFF"
-        history={history}
-        selector={value => value.batteryPercentage}
-        width={width - 74}
-      />
+      {numericParameters.length > 0 ? (
+        numericParameters.map((parameter, index) => (
+          <MetricChart
+            key={parameter.id}
+            title={parameter.name}
+            unit={parameter.type}
+            color={CHART_COLORS[index % CHART_COLORS.length]}
+            history={history}
+            selector={value => value[parameter.name]}
+            width={width - 74}
+          />
+        ))
+      ) : (
+        <View style={styles.chartCard}>
+          <Text style={styles.empty}>No numeric/integer ESP parameters configured for charting.</Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
