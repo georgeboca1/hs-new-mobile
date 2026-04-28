@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {Pressable, StyleSheet} from 'react-native';
@@ -8,7 +8,7 @@ import {DashboardScreen} from '../screens/DashboardScreen';
 import {GraphsScreen} from '../screens/GraphsScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {useTelemetryStore} from '../store/useTelemetryStore';
-import {appNavigationTheme, colors} from '../theme/colors';
+import {appNavigationThemeDark, appNavigationThemeLight, AppColors, useAppColors} from '../theme/colors';
 
 export type RootTabsParamList = {
   Dashboard: undefined;
@@ -74,6 +74,8 @@ function MonitoringIcon({isRunning, color}: {isRunning: boolean; color: string})
 }
 
 function MonitoringHeaderButton(): React.JSX.Element {
+  const colors = useAppColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const telemetryRunning = useTelemetryStore(state => state.telemetryRunning);
   const startMonitoring = useTelemetryStore(state => state.startMonitoring);
   const stopMonitoring = useTelemetryStore(state => state.stopMonitoring);
@@ -135,12 +137,17 @@ const tabIconByRoute: {
 };
 
 export function AppNavigator(): React.JSX.Element {
+  const colors = useAppColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const tabBottomPadding = Math.max(insets.bottom, 8);
+  const settings = useTelemetryStore(state => state.settings);
+  const navTheme = settings?.themeMode === 'light' ? appNavigationThemeLight : appNavigationThemeDark;
 
   return (
-    <NavigationContainer theme={appNavigationTheme}>
+    <NavigationContainer theme={navTheme}>
       <Tab.Navigator
+        initialRouteName="Dashboard"
         screenOptions={({route}) => ({
           headerStyle: styles.header,
           headerTitleStyle: styles.headerTitle,
@@ -166,46 +173,47 @@ export function AppNavigator(): React.JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({
-  header: {
-    backgroundColor: colors.surface,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-  },
-  headerTitle: {
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
-  tabBar: {
-    backgroundColor: colors.surface,
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    height: 62,
-    paddingBottom: 8,
-    paddingTop: 8,
-  },
-  tabBarLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  monitorButton: {
-    marginRight: 14,
-    height: 34,
-    width: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  monitorButtonIdle: {
-    backgroundColor: colors.surfaceAlt,
-    borderColor: colors.neonPrimary,
-  },
-  monitorButtonRunning: {
-    backgroundColor: colors.neonGlow,
-    borderColor: colors.neonGlow,
-  },
-  monitorButtonBusy: {
-    opacity: 0.5,
-  },
-});
+const makeStyles = (colors: AppColors) =>
+  StyleSheet.create({
+    header: {
+      backgroundColor: colors.surface,
+      borderBottomColor: colors.border,
+      borderBottomWidth: 1,
+    },
+    headerTitle: {
+      color: colors.textPrimary,
+      fontWeight: '700',
+    },
+    tabBar: {
+      backgroundColor: colors.surface,
+      borderTopColor: colors.border,
+      borderTopWidth: 1,
+      height: 62,
+      paddingBottom: 8,
+      paddingTop: 8,
+    },
+    tabBarLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    monitorButton: {
+      marginRight: 14,
+      height: 34,
+      width: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+    },
+    monitorButtonIdle: {
+      backgroundColor: colors.surfaceAlt,
+      borderColor: colors.neonPrimary,
+    },
+    monitorButtonRunning: {
+      backgroundColor: colors.neonGlow,
+      borderColor: colors.neonGlow,
+    },
+    monitorButtonBusy: {
+      opacity: 0.5,
+    },
+  });

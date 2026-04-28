@@ -1,5 +1,5 @@
-import {Buffer} from 'buffer';
 import {PermissionsAndroid, Platform} from 'react-native';
+import {Buffer} from 'buffer';
 import {
   BleManager,
   Characteristic,
@@ -7,16 +7,23 @@ import {
   Subscription,
 } from 'react-native-ble-plx';
 import {AppSettings, ParsedPacket} from '../types/telemetry';
-import {parsePacketsFromChunk} from './packetParser';
+import {
+  decodeBleJsonPayload,
+  hasPacketParameterSchemaPayload,
+  normalizePacketParameterSchemas,
+  normalizeTelemetryPayload,
+  normalizePartialTelemetryPayload,
+} from './packetParser';
+import {accumulatePartialPacket} from './partialPacketAccumulator';
 
 type PacketCallback = (packet: ParsedPacket) => void;
+type SchemaCallback = (schemas: AppSettings['packetParameterSchemas']) => void;
 type LogCallback = (level: 'info' | 'warn' | 'error', message: string, context?: string) => void;
 const BLE_CONNECT_TIMEOUT_MS = 12000;
 
 const manager = new BleManager();
 let monitorSub: Subscription | null = null;
 let currentDevice: Device | null = null;
-let carry: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 
 async function requestAndroidPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') {
@@ -43,34 +50,49 @@ function selectDevice(device: Device, settings: AppSettings): boolean {
   const deviceName = device.name?.toLowerCase() ?? '';
   const localName = device.localName?.toLowerCase() ?? '';
   const serviceMatch =
-    device.serviceUUIDs?.some(uuid => uuid.toLowerCase() === settings.bleServiceUuid.toLowerCase()) ?? false;
+    device.serviceUUIDs?.some(uuid => uuid.toLowerCase() === settings.bleIdentifier.toLowerCase()) ?? false;
 
   return Boolean(deviceName || localName || serviceMatch);
 }
 
 function getConfiguredCharacteristics(settings: AppSettings): string[] {
-  return [settings.bleTelemetryUuid, settings.bleHealthUuid, settings.bleDebugJsonUuid]
+  return [settings.bleCharacteristicUuid]
     .map(value => value.trim().toLowerCase())
     .filter(Boolean);
 }
 
 async function hasConfiguredNotificationTargets(device: Device, settings: AppSettings): Promise<boolean> {
-  const serviceUUID = settings.bleServiceUuid.toLowerCase();
+  const serviceUUID = settings.bleIdentifier.toLowerCase();
   const characteristicUUIDs = getConfiguredCharacteristics(settings);
 
   try {
     const services = await device.services();
+    console.log('[BLE] Available services:', services.map(s => s.uuid));
     const matchingService = services.find(service => service.uuid.toLowerCase() === serviceUUID);
 
     if (!matchingService) {
+      console.warn('[BLE] Service not found:', {
+        looking_for: serviceUUID,
+        available: services.map(s => s.uuid),
+      });
       return false;
     }
 
     const characteristics = await device.characteristicsForService(serviceUUID);
-    return characteristicUUIDs.every(uuid =>
-      characteristics.some(characteristic => characteristic.uuid.toLowerCase() === uuid),
-    );
-  } catch {
+    console.log('[BLE] Available characteristics for service:', {
+      service: serviceUUID,
+      characteristics: characteristics.map(c => c.uuid),
+    });
+
+    const found = characteristicUUIDs.every(uuid => {
+      const exists = characteristics.some(characteristic => characteristic.uuid.toLowerCase() === uuid);
+      console.log('[BLE] Characteristic check:', {uuid, exists});
+      return exists;
+    });
+
+    return found;
+  } catch (error) {
+    console.error('[BLE] Error checking characteristics:', String(error));
     return false;
   }
 }
@@ -79,22 +101,52 @@ function handleCharacteristicValue(
   characteristic: Characteristic,
   settings: AppSettings,
   onPacket: PacketCallback,
+  onSchemaUpdate: SchemaCallback,
+  onLog: LogCallback,
 ): void {
-  if (!characteristic.value) {
+  const rawValue = characteristic.value;
+  console.log('[BLE] Characteristic received:', {
+    uuid: characteristic.uuid,
+    rawLength: rawValue?.length ?? 0,
+    rawValue: rawValue?.substring(0, 100),
+  });
+
+  const payload = decodeBleJsonPayload(rawValue);
+  if (payload === null) {
+    console.warn('[BLE] Failed to decode payload. Raw value:', rawValue?.substring(0, 200));
+    onLog('warn', 'BLE payload decode failed', `uuid: ${characteristic.uuid}`);
     return;
   }
 
-  const raw = Buffer.from(characteristic.value, 'base64');
-  const chunk = new Uint8Array(raw);
-  const parsed = parsePacketsFromChunk(chunk, carry, settings);
-  carry = parsed.remaining;
+  console.log('[BLE] Decoded payload:', JSON.stringify(payload).substring(0, 200));
 
-  parsed.packets.forEach(packet => onPacket(packet));
+  // Check if this is a schema update payload
+  if (hasPacketParameterSchemaPayload(payload)) {
+    console.log('[BLE] Processing schema update');
+    onSchemaUpdate(normalizePacketParameterSchemas(payload, settings.packetParameterSchemas));
+    return;
+  }
+
+  // All telemetry objects should go through the accumulator to ensure fields
+  // from multiple partial JSON messages are correctly merged.
+  if (typeof payload === 'object' && payload !== null && !Array.isArray(payload)) {
+    console.log('[BLE] Accumulating telemetry fields:', Object.keys(payload));
+    accumulatePartialPacket(
+      undefined, // Let accumulator auto-detect the kind
+      payload as Record<string, unknown>,
+      onPacket,
+      normalizePartialTelemetryPayload,
+    );
+  } else {
+    console.warn('[BLE] Payload is not a valid object:', typeof payload);
+    onLog('warn', 'BLE payload is not an object', `type: ${typeof payload}`);
+  }
 }
 
 export async function startBleIngestion(
   settings: AppSettings,
   onPacket: PacketCallback,
+  onSchemaUpdate: SchemaCallback,
   onLog: LogCallback,
 ): Promise<boolean> {
   const granted = await requestAndroidPermissions();
@@ -102,8 +154,6 @@ export async function startBleIngestion(
     onLog('error', 'BLE permissions were not granted');
     return false;
   }
-
-  carry = new Uint8Array(0);
 
   return new Promise(resolve => {
     let settled = false;
@@ -148,12 +198,29 @@ export async function startBleIngestion(
         currentDevice = await scannedDevice.connect();
         await currentDevice.discoverAllServicesAndCharacteristics();
 
+        console.log('[BLE] Connected and services discovered');
+        console.log('[BLE] Looking for:', {
+          serviceUUID: settings.bleIdentifier,
+          characteristicUUIDs: getConfiguredCharacteristics(settings),
+        });
+
+        // Request larger MTU to prevent payload truncation
+        try {
+          const mtuResult = await currentDevice.requestMTU(517);
+          console.log('[BLE] MTU response:', mtuResult);
+          const mtuValue = typeof mtuResult === 'number' ? mtuResult : (mtuResult as any)?.mtu ?? 512;
+          onLog('info', 'MTU negotiated', `${mtuValue} bytes`);
+        } catch (mtuError) {
+          console.error('[BLE] MTU error:', mtuError);
+          onLog('warn', 'MTU negotiation failed, continuing with default', String(mtuError));
+        }
+
         const hasTarget = await hasConfiguredNotificationTargets(currentDevice, settings);
         if (!hasTarget) {
           onLog(
             'error',
-            'BLE device does not expose all configured characteristics',
-            `${settings.bleServiceUuid}/${getConfiguredCharacteristics(settings).join(',')}`,
+            'BLE device does not expose the configured identifier/characteristic',
+            `${settings.bleIdentifier}/${getConfiguredCharacteristics(settings).join(',')}`,
           );
           await currentDevice.cancelConnection();
           currentDevice = null;
@@ -172,14 +239,14 @@ export async function startBleIngestion(
         manager.stopDeviceScan();
 
         const monitorSubscriptions = getConfiguredCharacteristics(settings).map(characteristicUuid =>
-          connectedDevice.monitorCharacteristicForService(settings.bleServiceUuid, characteristicUuid, (monitorError, characteristic) => {
+          connectedDevice.monitorCharacteristicForService(settings.bleIdentifier, characteristicUuid, (monitorError, characteristic) => {
             if (monitorError) {
               onLog('error', 'BLE monitor error', `${characteristicUuid}: ${String(monitorError)}`);
               return;
             }
 
             if (characteristic) {
-              handleCharacteristicValue(characteristic, settings, onPacket);
+              handleCharacteristicValue(characteristic, settings, onPacket, onSchemaUpdate, onLog);
             }
           }),
         );
@@ -201,11 +268,27 @@ export async function startBleIngestion(
   });
 }
 
-export async function stopBleIngestion(): Promise<void> {
+export async function stopBleIngestion(settings?: AppSettings): Promise<void> {
   monitorSub?.remove();
   monitorSub = null;
 
   if (currentDevice) {
+    // Try to inform the device about our intent to disconnect so it can react if needed
+    if (settings) {
+      const serviceUUID = settings.bleIdentifier;
+      const characteristicUUIDs = getConfiguredCharacteristics(settings);
+      const payload = Buffer.from(JSON.stringify({command: 'disconnect'}), 'utf8').toString('base64');
+      for (const charUuid of characteristicUUIDs) {
+        try {
+          // best-effort write; ignore failures
+          // @ts-ignore: react-native-ble-plx types
+          await currentDevice.writeCharacteristicWithResponseForService(serviceUUID, charUuid, payload);
+        } catch (err) {
+          console.warn('[BLE] Failed to send disconnect command', {charUuid, err});
+        }
+      }
+    }
+
     try {
       await currentDevice.cancelConnection();
     } catch {

@@ -5,9 +5,7 @@ Android React Native app for parachutist monitoring with BLE ingestion, offline 
 ## Implemented Scope
 
 - Wrist wearable to phone link through BLE notifications.
-- Two packet headers configurable in Settings (hex):
-	- ESP packet header
-	- Parachute packet header
+- BLE connection in Settings uses one identifier and one characteristic UUID.
 - Offline-first local queue in SQLite.
 - Online synchronization over MQTT when internet is available.
 - On-device safety analysis:
@@ -25,20 +23,17 @@ Android React Native app for parachutist monitoring with BLE ingestion, offline 
 	- current now
 	- battery percentage
 - Debugging tools:
-	- manual packet replay from hex input
 	- log export via share sheet
 
 ## Added Parachute Parameter
 
 Altitude was added as an extra key parameter. Combined with vertical speed and g-force, it improves dangerous behavior context and impact risk interpretation.
 
-## Packet Structure
+## BLE Payloads
 
-This app expects both packet types to follow:
+Telemetry and parameter updates are both sent as JSON over the configured characteristic.
 
-header bytes + 2-byte payload length + UTF-8 JSON payload
-
-The header bytes are configured in Settings.
+Schema update JSON updates the app's parameter schema, especially the parachute parameters shown on the first tab.
 
 ## Parachute Payload Schema
 
@@ -110,7 +105,7 @@ npm run android
 
 ## Notes
 
-- BLE defaults are set in Settings for service and characteristic UUID and can be edited.
+- BLE defaults are set in Settings for identifier and characteristic UUID and can be edited.
 - App uses SQLite queueing to avoid data loss while offline.
 - Background sync attempts run periodically and can also be triggered manually.
 - For stable React Native tooling, Node 20.19.4+ is recommended.

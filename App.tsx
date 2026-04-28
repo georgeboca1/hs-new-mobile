@@ -3,10 +3,12 @@ import {StatusBar} from 'react-native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {AppNavigator} from './src/navigation/AppNavigator';
 import {disposeTelemetryStore, useTelemetryStore} from './src/store/useTelemetryStore';
-import {colors} from './src/theme/colors';
+import {useAppColors} from './src/theme/colors';
 
 function App(): React.JSX.Element {
   const bootstrap = useTelemetryStore(state => state.bootstrap);
+  const colors = useAppColors();
+  const themeMode = useTelemetryStore(state => state.settings?.themeMode);
 
   useEffect(() => {
     bootstrap().catch(() => undefined);
@@ -17,7 +19,10 @@ function App(): React.JSX.Element {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor={colors.surface} />
+      <StatusBar
+        barStyle={themeMode === 'light' ? 'dark-content' : 'light-content'}
+        backgroundColor={colors.surface}
+      />
       <AppNavigator />
     </SafeAreaProvider>
   );

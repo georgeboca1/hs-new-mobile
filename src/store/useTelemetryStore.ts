@@ -1,10 +1,12 @@
 import NetInfo from '@react-native-community/netinfo';
 import {Alert} from 'react-native';
 import {create} from 'zustand';
-import {MOCK_INTERVAL_MS, SYNC_INTERVAL_MS} from '../config/defaults';
+import {MOCK_INTERVAL_MS} from '../config/defaults';
 import {
+  clearAllData as clearDb,
   getEspHistory,
   getRecentLogs,
+  getTelemetryHistory,
   initializeDatabase,
   insertLog,
   queueAlert,
@@ -13,7 +15,6 @@ import {
 import {startBleIngestion, stopBleIngestion} from '../services/bleService';
 import {exportLogsToShareSheet} from '../services/logExportService';
 import {generateMockEspData, generateMockParachuteData} from '../services/mockDataService';
-import {parseHexReplayData} from '../services/packetParser';
 import {evaluateRisk} from '../services/riskEngine';
 import {loadSettings, saveSettings} from '../services/settingsService';
 import {syncNow} from '../services/syncService';
@@ -35,8 +36,9 @@ interface TelemetryState {
   startMonitoring: () => Promise<void>;
   stopMonitoring: () => Promise<void>;
   triggerSync: () => Promise<void>;
-  replayHexPacket: (hexText: string) => Promise<number>;
   exportLogs: () => Promise<string>;
+  clearAllData: () => Promise<void>;
+  fetchFullHistory: (limit?: number) => Promise<any[]>;
 }
 
 let mockTimer: ReturnType<typeof setInterval> | null = null;
@@ -54,12 +56,16 @@ async function appendLog(level: 'info' | 'warn' | 'error', message: string, cont
 async function ingestTelemetry(kind: TelemetryKind, payload: EspData | ParachuteData): Promise<void> {
   const store = useTelemetryStore.getState();
 
+  console.log('[Store] Ingesting telemetry:', {kind, timestamp: payload.timestamp});
+
   await queueTelemetry(kind, payload);
 
   if (kind === 'esp') {
     const espPayload = payload as EspData;
+    console.log('[Store] Updating ESP data:', espPayload);
     useTelemetryStore.setState(state => ({
-      latestEsp: espPayload,
+      // Merge with previous state to preserve fields not in the partial update
+      latestEsp: state.latestEsp ? {...state.latestEsp, ...espPayload} : espPayload,
       espHistory: trimHistory([...state.espHistory, espPayload]),
     }));
   }
@@ -67,10 +73,15 @@ async function ingestTelemetry(kind: TelemetryKind, payload: EspData | Parachute
   if (kind === 'parachute') {
     const parachutePayload = payload as ParachuteData;
     const risk = evaluateRisk(parachutePayload);
-    useTelemetryStore.setState({
-      latestParachute: parachutePayload,
-      risk,
+    console.log('[Store] Updating parachute data:', {
+      timestamp: parachutePayload.timestamp,
+      shouldAlert: risk.shouldAlert,
     });
+    useTelemetryStore.setState(state => ({
+      // Merge with previous state to preserve fields not in the partial update
+      latestParachute: state.latestParachute ? {...state.latestParachute, ...parachutePayload} : parachutePayload,
+      risk,
+    }));
 
     if (risk.shouldAlert) {
       await queueAlert({
@@ -90,8 +101,17 @@ async function runSingleMockCycle(): Promise<void> {
     return;
   }
 
-  await ingestTelemetry('esp', generateMockEspData(settings.packetParameterSchemas.esp));
-  await ingestTelemetry('parachute', generateMockParachuteData(settings.packetParameterSchemas.parachute));
+  const sharedTimestamp = new Date().toLocaleTimeString('en-GB'); // e.g. "14:20:04"
+
+  const espData = generateMockEspData();
+  const parachuteData = generateMockParachuteData();
+
+  // Override timestamps to be identical for the grouping demonstration
+  espData.timestamp = sharedTimestamp;
+  parachuteData.timestamp = sharedTimestamp;
+
+  await ingestTelemetry('esp', espData);
+  await ingestTelemetry('parachute', parachuteData);
 }
 
 export const useTelemetryStore = create<TelemetryState>((set, get) => ({
@@ -109,6 +129,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
   bootstrap: async () => {
     await initializeDatabase();
     const settings = await loadSettings();
+
     const espHistory = await getEspHistory(120);
     const logs = await getRecentLogs(120);
 
@@ -124,11 +145,6 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
     netUnsubscribe = NetInfo.addEventListener(state => {
       set({internetConnected: Boolean(state.isConnected && state.isInternetReachable !== false)});
     });
-
-    syncTimer && clearInterval(syncTimer);
-    syncTimer = setInterval(() => {
-      get().triggerSync().catch(() => undefined);
-    }, SYNC_INTERVAL_MS);
 
     await appendLog('info', 'App initialized');
   },
@@ -172,9 +188,18 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
     const connected = await startBleIngestion(
       settings,
       packet => {
-        ingestTelemetry(packet.kind, packet.payload).catch(() => undefined);
+        ingestTelemetry(packet.kind, packet.payload).catch(err => {
+          console.error('[BLE] Error ingesting telemetry:', err);
+          appendLog('error', 'Failed to ingest telemetry', String(err)).catch(() => undefined);
+        });
+      },
+      schemas => {
+        get().updateSettings({packetParameterSchemas: schemas}).catch(err => {
+          console.error('[BLE] Error updating settings:', err);
+        });
       },
       (level, message, context) => {
+        console.log('[BLE Log]', level, message, context);
         appendLog(level, message, context ?? '').catch(() => undefined);
       },
     );
@@ -198,7 +223,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       mockTimer = null;
     }
 
-    await stopBleIngestion();
+    await stopBleIngestion(get().settings ?? undefined);
 
     set({telemetryRunning: false});
     await appendLog('info', 'Telemetry stream stopped');
@@ -219,27 +244,28 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
     set({logs});
   },
 
-  replayHexPacket: async hexText => {
-    const settings = get().settings;
-    if (!settings) {
-      return 0;
-    }
-
-    const packets = parseHexReplayData(hexText, settings);
-    for (const packet of packets) {
-      await ingestTelemetry(packet.kind, packet.payload);
-    }
-
-    await appendLog('info', `Replayed ${packets.length} packet(s) from hex input`);
-    return packets.length;
-  },
-
   exportLogs: async () => {
     const path = await exportLogsToShareSheet();
     await appendLog('info', 'Logs exported', path);
     const logs = await getRecentLogs(120);
     set({logs});
     return path;
+  },
+
+  clearAllData: async () => {
+    await clearDb();
+    set({
+      espHistory: [],
+      logs: [],
+      latestEsp: null,
+      latestParachute: null,
+      risk: null,
+    });
+    await appendLog('info', 'Database and history cleared by user');
+  },
+
+  fetchFullHistory: async (limit = 200) => {
+    return getTelemetryHistory(limit);
   },
 }));
 

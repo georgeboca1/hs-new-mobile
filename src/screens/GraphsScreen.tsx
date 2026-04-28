@@ -1,41 +1,66 @@
-import React, {useMemo} from 'react';
-import {ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
-import Svg, {Circle, Line, Polyline} from 'react-native-svg';
-import {useTelemetryStore} from '../store/useTelemetryStore';
-import {EspData} from '../types/telemetry';
-import {colors} from '../theme/colors';
+import React, { useMemo } from 'react';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
+import { useTelemetryStore } from '../store/useTelemetryStore';
+import { EspData } from '../types/telemetry';
+import { AppColors, useAppColors } from '../theme/colors';
+import { TELEMETRY_PARAMETERS, getParameterUnit } from '../config/parameterDisplayConfig';
 
-const CHART_COLORS = ['#C63BFF', '#E87BFF', '#9A35FF', '#7E2CFF', '#D95FFF', '#6A8BFF', '#26D7AE'];
+const CHART_COLORS = ['#2DD4BF', '#60A5FA', '#F59E0B', '#34D399', '#F97316', '#60A5FA', '#94A3B8'];
 
-function asNumber(value: unknown, fallback = 0): number {
+function asNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
   if (typeof value === 'string') {
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    return Number.isFinite(parsed) ? parsed : null;
   }
   if (typeof value === 'boolean') {
     return value ? 1 : 0;
   }
-  return fallback;
+  return null;
 }
 
-function displayValue(value: unknown): string | number {
-  if (typeof value === 'string' || typeof value === 'number') {
+function displayValue(value: unknown, unit?: string): string {
+  if (typeof value === 'number') {
+    const numeric = Number.isInteger(value) ? String(value) : value.toFixed(2);
+    return unit === '%' ? `${numeric}%` : numeric;
+  }
+
+  if (typeof value === 'string') {
     return value;
   }
+
   if (typeof value === 'boolean') {
     return value ? 'true' : 'false';
   }
+
   return '-';
 }
 
-function Row({label, value}: {label: string; value: string | number}) {
+function buildTelemetryRows(payload: Record<string, unknown> | null): Array<{ key: string; label: string; value: unknown; unit?: string }> {
+  if (!payload) {
+    return [];
+  }
+
+  return TELEMETRY_PARAMETERS.map(param => ({
+    key: param.key,
+    label: param.label,
+    value: payload[param.key],
+    unit: param.unit,
+  })).filter(row => row.value !== undefined);
+}
+
+function Row({ label, value, unit, colors }: { label: string; value: string | number; unit?: string; colors: AppColors }) {
+  const styles = makeStyles(colors);
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
+      <Text style={styles.rowValue}>{displayValue(value, unit)}</Text>
     </View>
   );
 }
@@ -45,50 +70,96 @@ function MiniLineChart({
   width,
   height,
   color,
+  borderColor,
+  textColor,
 }: {
   values: number[];
   width: number;
   height: number;
   color: string;
+  borderColor: string;
+  textColor: string;
 }) {
-  const padding = 12;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(max - min, 1);
-  const xStep = (width - padding * 2) / Math.max(values.length - 1, 1);
+  if (values.length === 0) {
+    return null;
+  }
+
+  const paddingLeft = 40;
+  const paddingRight = 10;
+  const paddingTop = 15;
+  const paddingBottom = 15;
+
+  const chartWidth = width - paddingLeft - paddingRight;
+  const chartHeight = height - paddingTop - paddingBottom;
+
+  const min = 0;
+  const rawMax = Math.max(...values, 0.1);
+  const max = rawMax * 1.1; // 10% headroom
+  const span = max - min;
+
+  const xStep = chartWidth / Math.max(values.length - 1, 1);
 
   const points = values
     .map((value, index) => {
-      const x = padding + index * xStep;
+      const x = paddingLeft + index * xStep;
       const normalized = (value - min) / span;
-      const y = height - padding - normalized * (height - padding * 2);
+      const y = paddingTop + chartHeight - normalized * chartHeight;
       return `${x},${y}`;
     })
     .join(' ');
 
   const lastValue = values[values.length - 1];
-  const lastX = padding + (values.length - 1) * xStep;
-  const lastY =
-    height - padding - ((lastValue - min) / span) * (height - padding * 2);
+  const lastX = paddingLeft + (values.length - 1) * xStep;
+  const lastY = paddingTop + chartHeight - ((lastValue - min) / span) * chartHeight;
+
+  const yLabels = [
+    { y: paddingTop, val: max },
+    { y: paddingTop + chartHeight / 2, val: max / 2 },
+    { y: paddingTop + chartHeight, val: 0 },
+  ];
 
   return (
     <Svg width={width} height={height}>
+      {yLabels.map((l, i) => (
+        <React.Fragment key={i}>
+          <Line
+            x1={paddingLeft}
+            y1={l.y}
+            x2={width - paddingRight}
+            y2={l.y}
+            stroke={borderColor}
+            strokeWidth={0.5}
+            strokeDasharray="4,2"
+          />
+          <SvgText
+            x={paddingLeft - 6}
+            y={l.y + 4}
+            fill={textColor}
+            fontSize="10"
+            textAnchor="end"
+          >
+            {l.val >= 10 ? Math.round(l.val) : l.val.toFixed(1)}
+          </SvgText>
+        </React.Fragment>
+      ))}
+
       <Line
-        x1={padding}
-        y1={height - padding}
-        x2={width - padding}
-        y2={height - padding}
-        stroke={colors.border}
-        strokeWidth={1}
+        x1={paddingLeft}
+        y1={paddingTop + chartHeight}
+        x2={width - paddingRight}
+        y2={paddingTop + chartHeight}
+        stroke={borderColor}
+        strokeWidth={1.5}
       />
       <Line
-        x1={padding}
-        y1={padding}
-        x2={padding}
-        y2={height - padding}
-        stroke={colors.border}
-        strokeWidth={1}
+        x1={paddingLeft}
+        y1={paddingTop}
+        x2={paddingLeft}
+        y2={paddingTop + chartHeight}
+        stroke={borderColor}
+        strokeWidth={1.5}
       />
+
       <Polyline
         points={points}
         fill="none"
@@ -97,7 +168,7 @@ function MiniLineChart({
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-      <Circle cx={lastX} cy={lastY} r={3} fill={color} />
+      <Circle cx={lastX} cy={lastY} r={3.5} fill={color} />
     </Svg>
   );
 }
@@ -109,6 +180,7 @@ function MetricChart({
   history,
   selector,
   width,
+  colors,
 }: {
   title: string;
   unit: string;
@@ -116,13 +188,25 @@ function MetricChart({
   history: EspData[];
   selector: (value: EspData) => unknown;
   width: number;
+  colors: AppColors;
 }) {
+  const styles = makeStyles(colors);
   const data = useMemo(
-    () =>
-      history.slice(-30).map((item, index) => ({
-        value: Number(asNumber(selector(item)).toFixed(2)),
-        label: index % 6 === 0 ? `${index}` : '',
-      })),
+    () => {
+      const rawData = history.slice(-30).map((item, index) => {
+        const numValue = asNumber(selector(item));
+        return {
+          value: numValue,
+          label: index % 6 === 0 ? `${index}` : '',
+        };
+      });
+
+      // Filter out items with null values (missing data)
+      return rawData.filter(item => item.value !== null).map(item => ({
+        ...item,
+        value: Number(item.value!.toFixed(2)),
+      }));
+    },
     [history, selector],
   );
 
@@ -134,13 +218,15 @@ function MetricChart({
           <MiniLineChart
             values={data.map(item => item.value)}
             width={width}
-            height={170}
+            height={180}
             color={color}
+            borderColor={colors.border}
+            textColor={colors.textSecondary}
           />
           <View style={styles.statRow}>
-            <Text style={styles.axisText}>Min {Math.min(...data.map(d => d.value)).toFixed(2)}</Text>
-            <Text style={styles.axisText}>Max {Math.max(...data.map(d => d.value)).toFixed(2)}</Text>
-            <Text style={styles.axisText}>Now {data[data.length - 1].value.toFixed(2)}</Text>
+            <Text style={styles.axisText}>Min {Math.min(...data.map(d => d.value)).toFixed(2)}{unit === '%' ? '%' : ''}</Text>
+            <Text style={styles.axisText}>Max {Math.max(...data.map(d => d.value)).toFixed(2)}{unit === '%' ? '%' : ''}</Text>
+            <Text style={styles.axisText}>Now {data[data.length - 1].value.toFixed(2)}{unit === '%' ? '%' : ''}</Text>
           </View>
         </>
       ) : (
@@ -152,14 +238,16 @@ function MetricChart({
 }
 
 export function GraphsScreen(): React.JSX.Element {
+  const colors = useAppColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const history = useTelemetryStore(state => state.espHistory);
   const latestEsp = useTelemetryStore(state => state.latestEsp);
   const settings = useTelemetryStore(state => state.settings);
-  const {width} = useWindowDimensions();
+  const { width } = useWindowDimensions();
 
   const espParameters = useMemo(
     () =>
-      (settings?.packetParameterSchemas.esp ?? [])
+      (settings?.packetParameterSchemas?.esp ?? [])
         .map(parameter => ({
           ...parameter,
           name: parameter.name.trim(),
@@ -169,24 +257,40 @@ export function GraphsScreen(): React.JSX.Element {
   );
 
   const numericParameters = useMemo(
-    () => espParameters.filter(parameter => parameter.type === 'number' || parameter.type === 'integer'),
+    () =>
+      espParameters.filter(
+        parameter =>
+          (parameter.type === 'number' || parameter.type === 'integer') &&
+          !['temperature', 'rssi', 'currentnow'].includes(parameter.name.toLowerCase()),
+      ),
     [espParameters],
+  );
+
+  const telemetryRows = useMemo(
+    () => buildTelemetryRows(latestEsp),
+    [latestEsp],
   );
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.chartCard}>
-        <Text style={styles.chartTitle}>ESP Telemetry</Text>
+        <Text style={styles.chartTitle}>System Telemetry</Text>
         {latestEsp ? (
-          espParameters.length > 0 ? (
-            espParameters.map(parameter => (
-              <Row key={parameter.id} label={parameter.name} value={displayValue(latestEsp[parameter.name])} />
+          telemetryRows.length > 0 ? (
+            telemetryRows.map(row => (
+              <Row
+                key={row.key}
+                label={row.label}
+                value={row.value as string | number}
+                unit={row.unit}
+                colors={colors}
+              />
             ))
           ) : (
-            <Text style={styles.empty}>No ESP parameters are configured.</Text>
+            <Text style={styles.empty}>No system telemetry data received yet.</Text>
           )
         ) : (
-          <Text style={styles.empty}>No ESP data yet.</Text>
+          <Text style={styles.empty}>No telemetry data yet.</Text>
         )}
       </View>
 
@@ -197,11 +301,12 @@ export function GraphsScreen(): React.JSX.Element {
           <MetricChart
             key={parameter.id}
             title={parameter.name}
-            unit={parameter.type}
+            unit={getParameterUnit(parameter.name, TELEMETRY_PARAMETERS) ?? parameter.type}
             color={CHART_COLORS[index % CHART_COLORS.length]}
             history={history}
             selector={value => value[parameter.name]}
-            width={width - 74}
+            width={width - 48}
+            colors={colors}
           />
         ))
       ) : (
@@ -213,62 +318,63 @@ export function GraphsScreen(): React.JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: 16,
-    gap: 12,
-  },
-  header: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.neonGlow,
-  },
-  chartCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    padding: 14,
-  },
-  chartTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 6,
-    color: colors.textPrimary,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    paddingVertical: 4,
-  },
-  rowLabel: {
-    color: colors.textSecondary,
-  },
-  rowValue: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  axisText: {
-    color: colors.textMuted,
-    fontSize: 10,
-  },
-  statRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  unitLabel: {
-    marginTop: 8,
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  empty: {
-    color: colors.textMuted,
-  },
-});
+const makeStyles = (colors: AppColors) =>
+  StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    content: {
+      padding: 16,
+      gap: 12,
+    },
+    header: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: colors.neonGlow,
+    },
+    chartCard: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      padding: 14,
+    },
+    chartTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      marginBottom: 6,
+      color: colors.textPrimary,
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      paddingVertical: 4,
+    },
+    rowLabel: {
+      color: colors.textSecondary,
+    },
+    rowValue: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    axisText: {
+      color: colors.textMuted,
+      fontSize: 10,
+    },
+    statRow: {
+      marginTop: 6,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    unitLabel: {
+      marginTop: 8,
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    empty: {
+      color: colors.textMuted,
+    },
+  });

@@ -1,196 +1,539 @@
-import {Buffer} from 'buffer';
-import {AppSettings, EspData, ParachuteData, ParsedPacket} from '../types/telemetry';
+import { Buffer } from 'buffer';
+import {
+  EspData,
+  PacketParameterDefinition,
+  PacketParameterSchemas,
+  ParsedPacket,
+  ParachuteData,
+} from '../types/telemetry';
 
-export interface PacketParseResult {
-  packets: ParsedPacket[];
-  remaining: Uint8Array<ArrayBufferLike>;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function sanitizeHex(value: string): string {
-  return value.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
-}
-
-function hexToBytes(hex: string): number[] {
-  const normalized = sanitizeHex(hex);
-  if (normalized.length < 2 || normalized.length % 2 !== 0) {
-    return [];
+function getValue(payload: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (payload[key] !== undefined) {
+      return payload[key];
+    }
   }
 
-  const bytes: number[] = [];
-  for (let i = 0; i < normalized.length; i += 2) {
-    bytes.push(parseInt(normalized.slice(i, i + 2), 16));
-  }
-
-  return bytes;
+  return undefined;
 }
 
-function startsWithAt(
-  buffer: Uint8Array<ArrayBufferLike>,
-  offset: number,
-  expected: number[],
-): boolean {
-  if (expected.length === 0 || offset + expected.length > buffer.length) {
+function assignNumberField(
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  targetKey: string,
+  keys: string[],
+  fallback?: number,
+): void {
+  const value = getValue(payload, keys);
+  if (value !== undefined) {
+    target[targetKey] = Number(value);
+    return;
+  }
+
+  if (fallback !== undefined) {
+    target[targetKey] = fallback;
+  }
+}
+
+function assignStringField(
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  targetKey: string,
+  keys: string[],
+  fallback?: string,
+): void {
+  const value = getValue(payload, keys);
+  if (value !== undefined) {
+    target[targetKey] = String(value);
+    return;
+  }
+
+  if (fallback !== undefined) {
+    target[targetKey] = fallback;
+  }
+}
+
+export function hasPacketParameterSchemaPayload(payload: unknown): boolean {
+  if (Array.isArray(payload)) {
+    return true;
+  }
+
+  if (!isRecord(payload)) {
     return false;
   }
 
-  for (let i = 0; i < expected.length; i += 1) {
-    if (buffer[offset + i] !== expected[i]) {
-      return false;
-    }
+  if (isRecord(payload.packetParameterSchemas)) {
+    return true;
   }
 
-  return true;
-}
-
-function mergeBytes(
-  left: Uint8Array<ArrayBufferLike>,
-  right: Uint8Array<ArrayBufferLike>,
-): Uint8Array<ArrayBufferLike> {
-  const merged = new Uint8Array(left.length + right.length);
-  merged.set(left, 0);
-  merged.set(right, left.length);
-  return merged;
-}
-
-function normalizeEspData(payload: Record<string, unknown>): EspData {
-  const nowIso = new Date().toISOString();
-  return {
-    temperature: Number(payload.temperature ?? 0),
-    ioLog: String(payload.io_log ?? ''),
-    timestamp: String(payload.timestamp ?? nowIso),
-    rssi: Number(payload.rssi ?? 0),
-    networkName: String(payload.network_name ?? ''),
-    cpuLoad: Number(payload.cpu_load ?? 0),
-    voltage: Number(payload.voltage ?? 0),
-    currentNow: Number(payload.current_now ?? 0),
-    currentTotal: Number(payload.current_total ?? 0),
-    batteryLife: String(payload.battery_life ?? ''),
-    batteryPercentage: Number(payload.battery_percentage ?? 0),
-  };
-}
-
-function normalizeParachuteData(payload: Record<string, unknown>): ParachuteData {
-  const nowIso = new Date().toISOString();
-  const pos = String(payload.bodyPosition ?? payload.body_position ?? 'stable');
-
-  return {
-    timestamp: String(payload.timestamp ?? nowIso),
-    chuteOpened: Boolean(payload.chuteOpened ?? payload.chute_opened ?? false),
-    bodyPosition:
-      pos === 'tilted-left' ||
-      pos === 'tilted-right' ||
-      pos === 'head-down' ||
-      pos === 'unstable'
-        ? pos
-        : 'stable',
-    stressLevel: Number(payload.stressLevel ?? payload.stress_level ?? 0),
-    bodyTemperature: Number(payload.bodyTemperature ?? payload.body_temperature ?? 0),
-    bloodOxygen: Number(payload.bloodOxygen ?? payload.blood_oxygen ?? 0),
-    heartRate: Number(payload.heartRate ?? payload.heart_rate ?? 0),
-    verticalSpeed: Number(payload.verticalSpeed ?? payload.vertical_speed ?? 0),
-    rotationRate: Number(payload.rotationRate ?? payload.rotation_rate ?? 0),
-    movementIndex: Number(payload.movementIndex ?? payload.movement_index ?? 0),
-    altitude: Number(payload.altitude ?? 0),
-    gForce: Number(payload.gForce ?? payload.g_force ?? 1),
-    batteryPercentage: Number(payload.batteryPercentage ?? payload.battery_percentage ?? 0),
-  };
-}
-
-function findHeaderStart(
-  buffer: Uint8Array<ArrayBufferLike>,
-  from: number,
-  headers: number[][],
-): number {
-  for (let index = from; index < buffer.length; index += 1) {
-    if (headers.some(header => startsWithAt(buffer, index, header))) {
-      return index;
-    }
+  if (Array.isArray(payload.parameters) || Array.isArray(payload.fields) || Array.isArray(payload.items)) {
+    return true;
   }
 
-  return -1;
+  if (Array.isArray(payload.esp) || Array.isArray(payload.parachute)) {
+    return true;
+  }
+
+  const kind = String(payload.kind ?? payload.type ?? payload.target ?? '').trim().toLowerCase();
+  return kind === 'schema' || kind === 'parameters' || kind === 'parameter-schema';
 }
 
-function parsePayload(rawText: string): Record<string, unknown> | null {
+export function decodeBleJsonPayload(value: string | null | undefined): unknown | null {
+  if (!value) {
+    return null;
+  }
+
   try {
-    const parsed = JSON.parse(rawText) as Record<string, unknown>;
-    return parsed;
-  } catch {
+    const raw = Buffer.from(value, 'base64').toString('utf8').trim();
+    if (!raw) {
+      console.warn('[Parser] Base64 decode produced empty string from:', value.substring(0, 50));
+      return null;
+    }
+
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    console.error('[Parser] Decode error:', {
+      error: String(error),
+      value: value.substring(0, 100),
+      errorType: error instanceof SyntaxError ? 'JSON_PARSE' : 'BASE64_DECODE',
+    });
     return null;
   }
 }
 
-export function parsePacketsFromChunk(
-  chunk: Uint8Array<ArrayBufferLike>,
-  carry: Uint8Array<ArrayBufferLike>,
-  settings: AppSettings,
-): PacketParseResult {
-  const espHeader = hexToBytes(settings.espPacketHeaderHex);
-  const parachuteHeader = hexToBytes(settings.parachutePacketHeaderHex);
-  const headers = [espHeader, parachuteHeader].filter(h => h.length > 0);
-
-  if (headers.length === 0) {
-    return {packets: [], remaining: new Uint8Array(0)};
+function normalizeBodyPosition(value: unknown): ParachuteData['bodyPosition'] {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'horizontal' || normalized === 'stable') {
+    return 'stable';
   }
-
-  const buffer = mergeBytes(carry, chunk);
-  const packets: ParsedPacket[] = [];
-  let cursor = 0;
-
-  while (cursor < buffer.length) {
-    const start = findHeaderStart(buffer, cursor, headers);
-    if (start < 0) {
-      break;
-    }
-
-    const isEsp = startsWithAt(buffer, start, espHeader);
-    const selectedHeader = isEsp ? espHeader : parachuteHeader;
-
-    if (start + selectedHeader.length + 2 > buffer.length) {
-      cursor = start;
-      break;
-    }
-
-    const payloadLength =
-      buffer[start + selectedHeader.length] * 256 +
-      buffer[start + selectedHeader.length + 1];
-
-    const payloadStart = start + selectedHeader.length + 2;
-    const payloadEnd = payloadStart + payloadLength;
-
-    if (payloadEnd > buffer.length) {
-      cursor = start;
-      break;
-    }
-
-    const payloadRaw = Buffer.from(buffer.slice(payloadStart, payloadEnd)).toString('utf8').trim();
-    const payload = parsePayload(payloadRaw);
-
-    if (payload) {
-      packets.push({
-        kind: isEsp ? 'esp' : 'parachute',
-        payload: isEsp ? normalizeEspData(payload) : normalizeParachuteData(payload),
-      });
-    }
-
-    cursor = payloadEnd;
+  if (normalized === 'tilted-left' || normalized === 'tilted_left') {
+    return 'tilted-left';
   }
-
-  return {
-    packets,
-    remaining: buffer.slice(cursor),
-  };
+  if (normalized === 'tilted-right' || normalized === 'tilted_right') {
+    return 'tilted-right';
+  }
+  if (normalized === 'head-down' || normalized === 'head_down') {
+    return 'head-down';
+  }
+  if (normalized === 'unstable') {
+    return 'unstable';
+  }
+  return 'stable';
 }
 
-export function parseHexReplayData(hexText: string, settings: AppSettings): ParsedPacket[] {
-  const clean = sanitizeHex(hexText);
-  if (!clean || clean.length % 2 !== 0) {
+function normalizeEspPartialData(payload: Record<string, unknown>): Partial<EspData> {
+  const normalized: Record<string, unknown> = { ...payload };
+
+  // Timestamp
+  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't'], payload.timestamp ? String(payload.timestamp) : undefined);
+
+  // Temperature
+  const tempVal = getValue(payload, ['temp', 'temperature', 'bodyTemperature', 'body_temperature']);
+  if (tempVal !== undefined) {
+    normalized.temp = Number(tempVal);
+    normalized.temperature = Number(tempVal);
+  }
+
+  assignStringField(normalized, payload, 'ioLog', ['ioLog', 'io_log', 'log', 'l']);
+  assignNumberField(normalized, payload, 'rssi', ['rssi', 'rs']);
+  assignStringField(normalized, payload, 'networkName', ['networkName', 'network_name', 'net', 'n']);
+  
+  // CPU Load
+  const cpuVal = getValue(payload, ['cpu_load', 'cpuLoad', 'cpu']);
+  if (cpuVal !== undefined) {
+    normalized.cpu_load = Number(cpuVal);
+    normalized.cpuLoad = Number(cpuVal);
+  }
+  
+  // Voltage
+  const voltVal = getValue(payload, ['voltage', 'v']);
+  if (voltVal !== undefined) {
+    normalized.voltage = Number(voltVal);
+  }
+  
+  // Current
+  const currentVal = getValue(payload, ['current_ma', 'currentNow', 'current_now', 'c']);
+  if (currentVal !== undefined) {
+    normalized.current_ma = Number(currentVal);
+    normalized.currentNow = Number(currentVal);
+  }
+  
+  // Consumed mAh
+  const consumedVal = getValue(payload, ['consumed_mah', 'currentTotal', 'current_total', 'mah', 'm']);
+  if (consumedVal !== undefined) {
+    normalized.consumed_mah = Number(consumedVal);
+    normalized.currentTotal = Number(consumedVal);
+  }
+  
+  // Battery Life
+  const lifeVal = getValue(payload, ['battery_life_min', 'batteryLife', 'battery_life', 'bl']);
+  if (lifeVal !== undefined) {
+    normalized.battery_life_min = Number(lifeVal);
+    normalized.batteryLife = String(lifeVal);
+  }
+  
+  // Battery Percentage
+  const batteryPctVal = getValue(payload, ['battery_pct', 'batteryPercentage', 'battery_percentage', 'bat', 'b']);
+  if (batteryPctVal !== undefined) {
+    normalized.battery_pct = Number(batteryPctVal);
+    normalized.batteryPercentage = Number(batteryPctVal);
+  }
+
+  // State
+  assignStringField(normalized, payload, 'state', ['state', 's']);
+  assignStringField(normalized, payload, 'power_state', ['power_state', 'powerState', 'pw']);
+
+  return normalized as Partial<EspData>;
+}
+
+function normalizeParachutePartialData(payload: Record<string, unknown>): Partial<ParachuteData> {
+  const normalized: Record<string, unknown> = { ...payload };
+
+  // Timestamp
+  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't'], payload.timestamp ? String(payload.timestamp) : undefined);
+
+  // Flight State & Parachute
+  assignStringField(normalized, payload, 'state', ['state', 's']);
+  assignStringField(normalized, payload, 'parachute', ['parachute', 'p']);
+
+  const positionSource = getValue(payload, ['body_position', 'bodyPosition', 'pos', 'bp']);
+  if (positionSource !== undefined) {
+    normalized.body_position = normalizeBodyPosition(positionSource);
+    normalized.bodyPosition = normalized.body_position;
+  }
+
+  const chuteOpenedSource = getValue(payload, ['chute_opened', 'chuteOpened', 'co']);
+  if (chuteOpenedSource !== undefined) {
+    normalized.chuteOpened = typeof chuteOpenedSource === 'boolean' ? chuteOpenedSource : String(chuteOpenedSource).toLowerCase() === 'true';
+    normalized.parachute = normalized.chuteOpened ? 'DEPLOYED' : 'STOWED';
+  }
+
+  // Stress Level
+  const stressVal = getValue(payload, ['stress_level', 'stressLevel', 'sl']);
+  if (stressVal !== undefined) {
+    normalized.stress_level = Number(stressVal);
+    normalized.stressLevel = Number(stressVal);
+  }
+  
+  // Temperature
+  const tempVal = getValue(payload, ['temp', 'temperature', 'bodyTemperature', 'body_temperature']);
+  if (tempVal !== undefined) {
+    normalized.temp = Number(tempVal);
+    normalized.bodyTemperature = Number(tempVal);
+  }
+  
+  // SpO2
+  const spo2Val = getValue(payload, ['SpO2', 'spo2', 'bloodOxygen', 'blood_oxygen', 'o']);
+  if (spo2Val !== undefined) {
+    normalized.SpO2 = Number(spo2Val);
+    normalized.bloodOxygen = Number(spo2Val);
+  }
+  
+  // Heart Rate
+  const hrVal = getValue(payload, ['heart_rate', 'heartRate', 'hr', 'h']);
+  if (hrVal !== undefined) {
+    normalized.heart_rate = Number(hrVal);
+    normalized.heartRate = Number(hrVal);
+  }
+  
+  assignNumberField(normalized, payload, 'temp_ext', ['temp_ext', 'externalTemperature', 'te']);
+  
+  const pulseVal = getValue(payload, ['is_pulse_stable', 'isPulseStable', 'ps']);
+  if (pulseVal !== undefined) {
+    normalized.is_pulse_stable = typeof pulseVal === 'boolean' ? pulseVal : String(pulseVal).toLowerCase() === 'true';
+    normalized.isPulseStable = normalized.is_pulse_stable;
+  }
+
+  // Vertical Speed
+  const vsVal = getValue(payload, ['vertical_speed', 'verticalSpeed', 'vs']);
+  if (vsVal !== undefined) {
+    normalized.vertical_speed = Number(vsVal);
+    normalized.verticalSpeed = Number(vsVal);
+  }
+  
+  // Rotation
+  const rotVal = getValue(payload, ['rotation', 'rotation_rate', 'rotationRate', 'r']);
+  if (rotVal !== undefined) {
+    normalized.rotation = Number(rotVal);
+    normalized.rotationRate = Number(rotVal);
+  }
+  
+  // G Force
+  const gVal = getValue(payload, ['g_force', 'gForce', 'g']);
+  if (gVal !== undefined) {
+    normalized.g_force = Number(gVal);
+    normalized.gForce = Number(gVal);
+  }
+  
+  // Battery Percentage
+  const batVal = getValue(payload, ['battery_pct', 'batteryPercentage', 'battery_percentage', 'bat', 'b']);
+  if (batVal !== undefined) {
+    normalized.battery_pct = Number(batVal);
+    normalized.batteryPercentage = Number(batVal);
+  }
+
+  // Voltage & Current (Some devices might send these in parachute packets too)
+  assignNumberField(normalized, payload, 'voltage', ['voltage', 'v']);
+  
+  const currentVal = getValue(payload, ['current_ma', 'currentNow', 'current_now', 'c']);
+  if (currentVal !== undefined) {
+    normalized.current_ma = Number(currentVal);
+    normalized.currentNow = Number(currentVal);
+  }
+
+  assignNumberField(normalized, payload, 'movementIndex', ['movementIndex', 'movement_index', 'mi']);
+  assignNumberField(normalized, payload, 'altitude', ['altitude', 'alt', 'a']);
+  assignNumberField(normalized, payload, 'risk_score', ['risk_score', 'riskScore', 'rs']);
+  assignNumberField(normalized, payload, 'flags', ['flags', 'f']);
+
+  const alertVal = getValue(payload, ['alert_active', 'alertActive', 'aa']);
+  if (alertVal !== undefined) {
+    normalized.alert_active = typeof alertVal === 'boolean' ? alertVal : String(alertVal).toLowerCase() === 'true';
+  }
+
+  return normalized as Partial<ParachuteData>;
+}
+
+function looksLikeEspData(payload: Record<string, unknown>): boolean {
+  return (
+    'temp' in payload ||
+    'temperature' in payload ||
+    'cpu_load' in payload ||
+    'cpuLoad' in payload ||
+    'cpu' in payload ||
+    'voltage' in payload ||
+    'v' in payload ||
+    'current_ma' in payload ||
+    'currentNow' in payload ||
+    'current_now' in payload ||
+    'c' in payload ||
+    'consumed_mah' in payload ||
+    'currentTotal' in payload ||
+    'mah' in payload ||
+    'm' in payload ||
+    'battery_pct' in payload ||
+    'batteryPercentage' in payload ||
+    'bat' in payload ||
+    'b' in payload ||
+    'battery_life_min' in payload ||
+    'batteryLife' in payload ||
+    'bl' in payload ||
+    'network_name' in payload ||
+    'networkName' in payload ||
+    'net' in payload ||
+    'n' in payload ||
+    'rssi' in payload ||
+    'rs' in payload ||
+    'io_log' in payload ||
+    'ioLog' in payload ||
+    'log' in payload ||
+    'l' in payload
+  );
+}
+
+function looksLikeParachuteData(payload: Record<string, unknown>): boolean {
+  return (
+    'body_position' in payload ||
+    'bodyPosition' in payload ||
+    'pos' in payload ||
+    'bp' in payload ||
+    'heart_rate' in payload ||
+    'heartRate' in payload ||
+    'hr' in payload ||
+    'h' in payload ||
+    'SpO2' in payload ||
+    'spo2' in payload ||
+    'o' in payload ||
+    'vertical_speed' in payload ||
+    'verticalSpeed' in payload ||
+    'vs' in payload ||
+    'rotation' in payload ||
+    'rotation_rate' in payload ||
+    'r' in payload ||
+    'stress_level' in payload ||
+    'stressLevel' in payload ||
+    'sl' in payload ||
+    'g_force' in payload ||
+    'gForce' in payload ||
+    'g' in payload ||
+    'state' in payload ||
+    's' in payload ||
+    'parachute' in payload ||
+    'p' in payload ||
+    'chute_opened' in payload ||
+    'co' in payload ||
+    'alert_active' in payload ||
+    'aa' in payload ||
+    'risk_score' in payload ||
+    'rs' in payload
+  );
+}
+
+function normalizeTelemetryPacket(payload: unknown): ParsedPacket | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const data = isRecord(payload.payload)
+    ? payload.payload
+    : isRecord(payload.data)
+      ? payload.data
+      : payload;
+  const kind = String(payload.kind ?? '').trim().toLowerCase();
+
+  if (kind === 'esp' || looksLikeEspData(data)) {
+    const normalized = normalizeEspPartialData(data);
+    if (normalized.timestamp) {
+      return { kind: 'esp', payload: normalized as EspData };
+    }
+  }
+
+  if (kind === 'parachute' || looksLikeParachuteData(data)) {
+    const normalized = normalizeParachutePartialData(data);
+    if (normalized.timestamp) {
+      return { kind: 'parachute', payload: normalized as ParachuteData };
+    }
+  }
+
+  return null;
+}
+
+function sanitizeParameterDefinition(value: unknown): PacketParameterDefinition | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = String(value.name ?? '').trim();
+  if (!name) {
+    return null;
+  }
+
+  const typeValue = String(value.type ?? 'number').trim().toLowerCase();
+  const type =
+    typeValue === 'integer' ||
+      typeValue === 'boolean' ||
+      typeValue === 'string' ||
+      typeValue === 'enum' ||
+      typeValue === 'isoDate'
+      ? (typeValue as PacketParameterDefinition['type'])
+      : 'number';
+
+  const id = String(value.id ?? name)
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+  const definition: PacketParameterDefinition = {
+    id: id || `param-${name.toLowerCase()}`,
+    name,
+    type,
+  };
+
+  if (typeof value.enumValues === 'string' && value.enumValues.trim()) {
+    definition.enumValues = value.enumValues.trim();
+  }
+
+  return definition;
+}
+
+function sanitizeSchema(values: unknown): PacketParameterDefinition[] {
+  if (!Array.isArray(values)) {
     return [];
   }
 
-  const bytes = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < clean.length; i += 2) {
-    bytes[i / 2] = parseInt(clean.slice(i, i + 2), 16);
+  const seen = new Set<string>();
+  const definitions: PacketParameterDefinition[] = [];
+
+  for (const value of values) {
+    const definition = sanitizeParameterDefinition(value);
+    if (!definition) {
+      continue;
+    }
+
+    const key = definition.name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    definitions.push(definition);
   }
 
-  return parsePacketsFromChunk(bytes, new Uint8Array(0), settings).packets;
+  return definitions;
+}
+
+export function normalizeTelemetryPayload(payload: unknown): ParsedPacket | null {
+  return normalizeTelemetryPacket(payload);
+}
+
+/**
+ * Normalizes partial telemetry data (accumulated from multiple BLE messages)
+ * Attempts to determine the packet kind based on available fields
+ * Returns null if the partial data doesn't contain enough information to identify the kind
+ */
+export function normalizePartialTelemetryPayload(partial: Record<string, unknown>): ParsedPacket | null {
+  if (!isRecord(partial) || Object.keys(partial).length === 0) {
+    return null;
+  }
+
+  // Try to determine the kind based on which fields we have
+  if (looksLikeEspData(partial)) {
+    const normalized = normalizeEspPartialData(partial);
+    if (normalized.timestamp) {
+      return { kind: 'esp', payload: normalized as EspData };
+    }
+  }
+
+  if (looksLikeParachuteData(partial)) {
+    const normalized = normalizeParachutePartialData(partial);
+    if (normalized.timestamp) {
+      return { kind: 'parachute', payload: normalized as ParachuteData };
+    }
+  }
+
+  // If we can't determine the kind yet or don't have a timestamp, return null
+  return null;
+}
+
+export function normalizePacketParameterSchemas(
+  payload: unknown,
+  fallback: PacketParameterSchemas,
+): PacketParameterSchemas {
+  if (Array.isArray(payload)) {
+    return {
+      esp: fallback.esp,
+      parachute: sanitizeSchema(payload),
+    };
+  }
+
+  if (!isRecord(payload)) {
+    return fallback;
+  }
+
+  const nestedSchemas = isRecord(payload.packetParameterSchemas) ? payload.packetParameterSchemas : payload;
+  const esp = sanitizeSchema(nestedSchemas.esp);
+  const parachute = sanitizeSchema(nestedSchemas.parachute);
+
+  if (esp.length === 0 && parachute.length === 0) {
+    const parameters = sanitizeSchema(payload.parameters ?? payload.fields ?? payload.items);
+    if (parameters.length > 0) {
+      const kind = String(payload.kind ?? payload.target ?? '').trim().toLowerCase();
+      return {
+        esp: kind === 'esp' ? parameters : fallback.esp,
+        parachute: kind === 'esp' ? fallback.parachute : parameters,
+      };
+    }
+
+    return fallback;
+  }
+
+  return {
+    esp: esp.length > 0 ? esp : fallback.esp,
+    parachute: parachute.length > 0 ? parachute : fallback.parachute,
+  };
 }
