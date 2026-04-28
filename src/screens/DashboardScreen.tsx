@@ -44,6 +44,16 @@ function buildDashboardRows(payload: Record<string, unknown> | null): Array<{ ke
   })).filter(row => row.value !== undefined);
 }
 
+function StatusIndicator({ label, active, colors }: { label: string; active: boolean; colors: AppColors }) {
+  const styles = makeStyles(colors);
+  return (
+    <View style={styles.indicatorWrapper}>
+      <View style={[styles.indicatorDot, active ? styles.indicatorDotActive : styles.indicatorDotInactive]} />
+      <Text style={styles.indicatorLabel}>{label}</Text>
+    </View>
+  );
+}
+
 export function DashboardScreen(): React.JSX.Element {
   const colors = useAppColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -96,11 +106,49 @@ export function DashboardScreen(): React.JSX.Element {
 
       {risk ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>AI Safety Assessment</Text>
-          <View style={[styles.riskBanner, risk.shouldAlert ? styles.riskHigh : styles.riskNormal]}>
-            <Text style={styles.riskTitle}>Accident risk score: {risk.accidentRiskScore}</Text>
-            <Text style={styles.riskText}>{risk.reasons.join(' | ') || 'No anomalies detected'}</Text>
+          <Text style={styles.cardTitle}>Detailed Risk Assessment</Text>
+          
+          <View style={styles.riskScoreContainer}>
+            <View style={styles.riskScoreCircle}>
+              <Text style={styles.riskScoreValue}>{risk.accidentRiskScore}</Text>
+              <Text style={styles.riskScoreLabel}>RISK SCORE</Text>
+            </View>
+            <View style={styles.riskStatusContainer}>
+               <View style={[styles.statusBadge, risk.shouldAlert ? styles.statusBadgeDanger : styles.statusBadgeSafe]}>
+                  <Text style={styles.statusBadgeText}>{risk.shouldAlert ? 'DANGER' : 'SAFE'}</Text>
+               </View>
+               <Text style={styles.riskSummaryText}>
+                 {risk.reasons.length > 0 
+                   ? `${risk.reasons.length} threats detected` 
+                   : 'All systems nominal'}
+               </Text>
+            </View>
           </View>
+
+          <View style={styles.divider} />
+
+          <Text style={styles.sectionTitle}>Dangerous Situations</Text>
+          <View style={styles.statusGrid}>
+            <StatusIndicator label="Uncontrolled Fall" active={risk.uncontrolledFall} colors={colors} />
+            <StatusIndicator label="Excessive Rotation" active={risk.excessiveRotation} colors={colors} />
+            <StatusIndicator label="Inactivity / Fall" active={risk.lackOfMovement} colors={colors} />
+          </View>
+
+          <Text style={styles.sectionTitle}>Physiological Analysis</Text>
+          <View style={styles.statusGrid}>
+            <StatusIndicator label="Abnormal Pulse" active={risk.abnormalHeartRate} colors={colors} />
+            <StatusIndicator label="Critical Stress" active={risk.highStress} colors={colors} />
+            <StatusIndicator label="Abnormal Behavior" active={risk.abnormalAirBehavior} colors={colors} />
+          </View>
+
+          {risk.reasons.length > 0 && (
+            <View style={styles.reasonsContainer}>
+              <Text style={styles.reasonsTitle}>Detailed Alerts:</Text>
+              {risk.reasons.map((reason, i) => (
+                <Text key={i} style={styles.reasonItem}>• {reason}</Text>
+              ))}
+            </View>
+          )}
         </View>
       ) : null}
     </ScrollView>
@@ -201,5 +249,132 @@ const makeStyles = (colors: AppColors) =>
     riskText: {
       color: colors.textSecondary,
       marginTop: 4,
+    },
+    // New Detailed Risk Card Styles
+    riskScoreContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+      gap: 20,
+    },
+    riskScoreCircle: {
+      width: 80,
+      height: 80,
+      borderRadius: 40,
+      borderWidth: 3,
+      borderColor: colors.neonPrimary,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.inputBackground,
+    },
+    riskScoreValue: {
+      fontSize: 24,
+      fontWeight: '800',
+      color: colors.textPrimary,
+    },
+    riskScoreLabel: {
+      fontSize: 8,
+      fontWeight: '700',
+      color: colors.textMuted,
+    },
+    riskStatusContainer: {
+      flex: 1,
+      gap: 6,
+    },
+    statusBadge: {
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 20,
+      alignSelf: 'flex-start',
+    },
+    statusBadgeSafe: {
+      backgroundColor: '#132A23',
+      borderWidth: 1,
+      borderColor: colors.success,
+    },
+    statusBadgeDanger: {
+      backgroundColor: '#2D1320',
+      borderWidth: 1,
+      borderColor: colors.danger,
+    },
+    statusBadgeText: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: colors.textPrimary,
+    },
+    riskSummaryText: {
+      color: colors.textSecondary,
+      fontSize: 13,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: colors.border,
+      marginVertical: 14,
+    },
+    sectionTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: 8,
+    },
+    statusGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 16,
+    },
+    indicatorWrapper: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.inputBackground,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      minWidth: '48%',
+    },
+    indicatorDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: 8,
+    },
+    indicatorDotActive: {
+      backgroundColor: colors.danger,
+      shadowColor: colors.danger,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 1,
+      shadowRadius: 4,
+      elevation: 4,
+    },
+    indicatorDotInactive: {
+      backgroundColor: colors.border,
+    },
+    indicatorLabel: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      fontWeight: '500',
+    },
+    reasonsContainer: {
+      marginTop: 4,
+      padding: 10,
+      backgroundColor: colors.inputBackground,
+      borderRadius: 8,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.danger,
+    },
+    reasonsTitle: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.danger,
+      marginBottom: 4,
+    },
+    reasonItem: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      lineHeight: 18,
     },
   });

@@ -178,20 +178,23 @@ export function generateMockParachuteData(): ParachuteData {
 
   const state = flightStates[Math.floor(Math.random() * flightStates.length)];
   const isFalling = state === 'FALLING' || state === 'DEPLOYED';
+  
+  // Sometimes force a dangerous situation for testing (15% chance)
+  const forceDanger = Math.random() > 0.85;
 
   return {
     timestamp: new Date().toLocaleTimeString('en-GB'),
     state,
     parachute: state === 'DEPLOYED' ? 'DEPLOYED' : 'STOWED',
-    body_position: bodyPositions[Math.floor(Math.random() * bodyPositions.length)],
-    heart_rate: randomInt(60, 160),
-    SpO2: randomBetween(94, 99),
+    body_position: forceDanger ? 'unstable' : bodyPositions[Math.floor(Math.random() * bodyPositions.length)],
+    heart_rate: forceDanger ? randomInt(185, 205) : randomInt(60, 160),
+    SpO2: forceDanger ? randomBetween(85, 91) : randomBetween(94, 99),
     temp: randomBetween(36.1, 37.8),
     temp_ext: randomBetween(15, 25),
-    stress_level: randomBetween(10, 95),
+    stress_level: forceDanger ? randomBetween(85, 98) : randomBetween(10, 95),
     is_pulse_stable: Math.random() > 0.1,
-    vertical_speed: isFalling ? randomBetween(-50, -10) : randomBetween(0, 10),
-    rotation: randomBetween(0, 180),
+    vertical_speed: forceDanger ? randomBetween(-60, -30) : (isFalling ? randomBetween(-50, -10) : randomBetween(0, 10)),
+    rotation: forceDanger ? randomBetween(260, 450) : randomBetween(0, 180),
     g_force: randomBetween(0.8, 4.5),
     battery_pct: randomInt(10, 100),
     voltage: randomBetween(3.7, 4.2),
@@ -203,5 +206,6 @@ export function generateMockParachuteData(): ParachuteData {
     risk_score: randomBetween(0, 100),
     flags: randomInt(0, 255),
     alert_active: Math.random() > 0.9,
+    movementIndex: forceDanger ? randomBetween(0, 0.04) : randomBetween(0.1, 0.9),
   };
 }

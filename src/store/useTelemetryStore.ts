@@ -16,6 +16,7 @@ import {startBleIngestion, stopBleIngestion} from '../services/bleService';
 import {exportLogsToShareSheet} from '../services/logExportService';
 import {generateMockEspData, generateMockParachuteData} from '../services/mockDataService';
 import {evaluateRisk} from '../services/riskEngine';
+import {triggerDangerAlert} from '../services/alertService';
 import {loadSettings, saveSettings} from '../services/settingsService';
 import {syncNow} from '../services/syncService';
 import {AppLog, AppSettings, EspData, ParachuteData, RiskAssessment, TelemetryKind} from '../types/telemetry';
@@ -91,6 +92,11 @@ async function ingestTelemetry(kind: TelemetryKind, payload: EspData | Parachute
         esp: store.latestEsp,
       });
       await appendLog('warn', 'Automatic alert queued', JSON.stringify(risk.reasons));
+      
+      // Trigger the high-priority UI alert (sound, popup, cooldown)
+      triggerDangerAlert(risk, parachutePayload, store.settings).catch(err => {
+        console.error('[Store] Alert trigger failed:', err);
+      });
     }
   }
 }
@@ -240,8 +246,16 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
   },
 
   triggerSync: async () => {
-    const settings = get().settings;
+    const { settings, telemetryRunning } = get();
     if (!settings) {
+      return;
+    }
+
+    if (telemetryRunning) {
+      Alert.alert(
+        'Action Required',
+        'Please stop the telemetry stream (disconnect) before syncing data. This ensures all data is properly saved before transmission.'
+      );
       return;
     }
 
