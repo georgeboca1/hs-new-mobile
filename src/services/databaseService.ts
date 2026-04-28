@@ -322,3 +322,33 @@ export async function clearAllData(): Promise<void> {
   await db.executeSql('VACUUM');
 }
 
+export async function getAllDatabaseContent(): Promise<any> {
+  const db = await getDb();
+  
+  const [telemetryResult] = await db.executeSql('SELECT * FROM telemetry_history');
+  const [alertsResult] = await db.executeSql('SELECT * FROM alerts_queue');
+  const [logsResult] = await db.executeSql('SELECT * FROM app_logs');
+
+  const telemetry = [];
+  for (let i = 0; i < telemetryResult.rows.length; i++) {
+    telemetry.push(telemetryResult.rows.item(i));
+  }
+
+  const alerts = [];
+  for (let i = 0; i < alertsResult.rows.length; i++) {
+    alerts.push(alertsResult.rows.item(i));
+  }
+
+  const logs = [];
+  for (let i = 0; i < logsResult.rows.length; i++) {
+    logs.push(logsResult.rows.item(i));
+  }
+
+  return {
+    telemetry,
+    alerts,
+    logs,
+    exportedAt: new Date().toISOString(),
+  };
+}
+

@@ -90,17 +90,11 @@ export function decodeBleJsonPayload(value: string | null | undefined): unknown 
   try {
     const raw = Buffer.from(value, 'base64').toString('utf8').trim();
     if (!raw) {
-      console.warn('[Parser] Base64 decode produced empty string from:', value.substring(0, 50));
       return null;
     }
 
     return JSON.parse(raw) as unknown;
   } catch (error) {
-    console.error('[Parser] Decode error:', {
-      error: String(error),
-      value: value.substring(0, 100),
-      errorType: error instanceof SyntaxError ? 'JSON_PARSE' : 'BASE64_DECODE',
-    });
     return null;
   }
 }
@@ -128,8 +122,8 @@ function normalizeBodyPosition(value: unknown): ParachuteData['bodyPosition'] {
 function normalizeEspPartialData(payload: Record<string, unknown>): Partial<EspData> {
   const normalized: Record<string, unknown> = { ...payload };
 
-  // Timestamp
-  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't'], payload.timestamp ? String(payload.timestamp) : undefined);
+  // Timestamp - strictly extract from BLE payload keys
+  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't']);
 
   // Temperature
   const tempVal = getValue(payload, ['temp', 'temperature', 'bodyTemperature', 'body_temperature']);
@@ -193,8 +187,8 @@ function normalizeEspPartialData(payload: Record<string, unknown>): Partial<EspD
 function normalizeParachutePartialData(payload: Record<string, unknown>): Partial<ParachuteData> {
   const normalized: Record<string, unknown> = { ...payload };
 
-  // Timestamp
-  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't'], payload.timestamp ? String(payload.timestamp) : undefined);
+  // Timestamp - strictly extract from BLE payload keys
+  assignStringField(normalized, payload, 'timestamp', ['timestamp', 'ts', 't']);
 
   // Flight State & Parachute
   assignStringField(normalized, payload, 'state', ['state', 's']);

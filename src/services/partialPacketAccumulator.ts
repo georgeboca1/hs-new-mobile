@@ -50,7 +50,6 @@ function scheduleBufferFlush(
   clearBufferTimeout(buffer);
 
   buffer.timeoutHandle = setTimeout(() => {
-    console.log('[PartialAccumulator] Timeout flushing buffer:', bufferKey);
     flushBuffer(bufferKey, callback, normalizer);
   }, PARTIAL_PACKET_TIMEOUT_MS);
 }
@@ -71,21 +70,14 @@ function flushBuffer(
 
   clearBufferTimeout(buffer);
 
-  console.log('[PartialAccumulator] Flushing buffer:', {
-    key: bufferKey,
-    fieldCount: Object.keys(buffer.accumulated).length,
-    fields: Object.keys(buffer.accumulated),
-  });
-
   const packet = normalizer(buffer.accumulated);
   if (packet) {
-    console.log('[PartialAccumulator] Emitting normalized packet:', {kind: packet.kind, timestamp: (packet.payload as any).timestamp});
     callback(packet);
     // NOTE: Do NOT clear accumulated data here. We preserve it so that
     // subsequent partial updates can retain previously received field values.
     // This is important for MTU-limited JSON where fields arrive across multiple messages.
   } else {
-    console.warn('[PartialAccumulator] Failed to normalize accumulated data:', JSON.stringify(buffer.accumulated).substring(0, 100));
+    // Failed to normalize
   }
 }
 
@@ -119,12 +111,6 @@ export function accumulatePartialPacket(
     buffers.set(bufferKey, buffer);
   }
 
-  console.log('[PartialAccumulator] Received partial update:', {
-    bufferKey,
-    newFields: Object.keys(partialData),
-    totalFields: Object.keys(buffer.accumulated).length,
-  });
-
   buffer.accumulated = mergePartialUpdate(buffer.accumulated, partialData);
   buffer.lastUpdateTime = Date.now();
 
@@ -133,7 +119,6 @@ export function accumulatePartialPacket(
   if (packet) {
     if (!kind) {
       // We determined the kind! Move the data from 'unknown' to the specific kind buffer
-      console.log('[PartialAccumulator] Determined packet kind:', packet.kind);
       clearBufferTimeout(buffer);
       buffers.delete('unknown');
       
@@ -144,9 +129,24 @@ export function accumulatePartialPacket(
 
     // Emit the valid packet immediately for responsiveness
     callback(packet);
+    
+    // Clear timeout and return; we just emitted a full packet, so no need to flush.
+    // We keep buffer.accumulated for subsequent partial updates (field retention).
+    clearBufferTimeout(buffer);
+    return;
   }
 
-  // Schedule timeout flush just in case no more updates arrive for a while
+  // Only schedule timeout flush if we HAVEN'T just emitted a valid packet
   scheduleBufferFlush(bufferKey, buffer, callback, normalizer);
+}
+
+/**
+ * Clears all accumulated buffers. Call this on disconnect or stop.
+ */
+export function clearAccumulatedBuffers(): void {
+  for (const buffer of buffers.values()) {
+    clearBufferTimeout(buffer);
+  }
+  buffers.clear();
 }
 

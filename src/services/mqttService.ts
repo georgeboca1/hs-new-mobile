@@ -66,6 +66,10 @@ export async function connectMqtt(settings: AppSettings): Promise<void> {
         reject(new Error(msg));
       });
 
+      client.on('message', (msg: {topic: string; data: string}) => {
+        console.log(`[MQTT DEBUG] Incoming message on ${msg.topic}:`, msg.data);
+      });
+
       console.log('[MQTT] Initiating connection...');
       client.connect();
     } catch (err) {
@@ -105,4 +109,58 @@ export async function publishMqttJson(topic: string, payload: object): Promise<b
     console.error('[MQTT] Publish failed:', err);
     return false;
   }
+}
+
+export function subscribeMqtt(topic: string): void {
+  if (client && connected) {
+    console.log('[MQTT] Subscribing to:', topic);
+    client.subscribe(topic, 0);
+  } else {
+    console.warn('[MQTT] Cannot subscribe: not connected');
+  }
+}
+
+export async function waitForMqttMessage(
+  topic: string,
+  predicate: (message: string) => boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!client || !connected) {
+    return false;
+  }
+
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      console.log(`[MQTT] Timeout waiting for message on ${topic}`);
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+
+    const handler = (msg: {topic: string; data: string}) => {
+      const normalizedMsgTopic = msg.topic.replace(/^\/|\/$/g, '');
+      const normalizedTargetTopic = topic.replace(/^\/|\/$/g, '');
+
+      if (normalizedMsgTopic === normalizedTargetTopic) {
+        console.log(`[MQTT] Received message on ${msg.topic}:`, msg.data);
+        if (predicate(msg.data)) {
+          console.log('[MQTT] Message matches predicate, resolving success');
+          cleanup();
+          resolve(true);
+        }
+      }
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      // sp-react-native-mqtt uses a custom event emitter, we might not have 'off'
+      // but 'on' returns a subscription we can remove? 
+      // Actually, standard practice for this lib is to use the global emitter or 
+      // check if removeListener exists.
+      if (client && (client as any).removeListener) {
+        (client as any).removeListener('message', handler);
+      }
+    };
+
+    client.on('message', handler);
+  });
 }

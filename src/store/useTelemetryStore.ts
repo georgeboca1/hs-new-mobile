@@ -85,7 +85,7 @@ async function ingestTelemetry(kind: TelemetryKind, payload: EspData | Parachute
 
     if (risk.shouldAlert) {
       await queueAlert({
-        timestamp: new Date().toISOString(),
+        timestamp: parachutePayload.timestamp || new Date().toISOString(),
         risk,
         parachute: parachutePayload,
         esp: store.latestEsp,
@@ -160,9 +160,17 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       ...patch,
     };
 
+    const mockDataChanged = current.useMockData !== updated.useMockData;
+    const wasRunning = get().telemetryRunning;
+
     await saveSettings(updated);
     set({settings: updated});
     await appendLog('info', 'Settings updated');
+
+    if (wasRunning && mockDataChanged) {
+      await appendLog('info', 'Data source changed while running, restarting stream...');
+      await get().startMonitoring();
+    }
   },
 
   startMonitoring: async () => {
@@ -189,18 +197,20 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       settings,
       packet => {
         ingestTelemetry(packet.kind, packet.payload).catch(err => {
-          console.error('[BLE] Error ingesting telemetry:', err);
           appendLog('error', 'Failed to ingest telemetry', String(err)).catch(() => undefined);
         });
       },
       schemas => {
         get().updateSettings({packetParameterSchemas: schemas}).catch(err => {
-          console.error('[BLE] Error updating settings:', err);
+          // ignore error
         });
       },
       (level, message, context) => {
-        console.log('[BLE Log]', level, message, context);
         appendLog(level, message, context ?? '').catch(() => undefined);
+      },
+      () => {
+        set({telemetryRunning: false});
+        appendLog('warn', 'BLE connection lost, telemetry stopped').catch(() => undefined);
       },
     );
 
@@ -235,9 +245,13 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       return;
     }
 
-    const result = await syncNow(settings);
-    if (result.syncedTelemetry > 0 || result.syncedAlerts > 0) {
+    const success = await syncNow(settings);
+    
+    if (success) {
       set({mqttLastSyncAt: new Date().toISOString()});
+      Alert.alert('Sync successful', 'Data has been synchronized and local database cleared.');
+    } else {
+      Alert.alert('Sync unsuccessful', 'Web server may be offline.');
     }
 
     const logs = await getRecentLogs(120);
