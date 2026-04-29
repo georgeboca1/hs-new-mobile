@@ -52,6 +52,12 @@ export function DatabaseView({ visible, onClose }: DatabaseViewProps): React.JSX
     'risk_score',
     'flags',
     'alert_active',
+    'pitch',
+    'roll',
+    'yaw',
+    'ax',
+    'ay',
+    'az',
   ];
 
   const renderHeader = () => (

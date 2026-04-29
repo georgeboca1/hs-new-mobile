@@ -160,7 +160,7 @@ function enrichParachuteAliases(payload: Record<string, MockValue>): Record<stri
 
 export function generateMockEspData(): EspData {
   return {
-    timestamp: new Date().toLocaleTimeString('en-GB'),
+    timestamp: new Date().toISOString(),
     cpu_load: randomBetween(10, 85),
     voltage: randomBetween(3.7, 4.2),
     current_ma: randomBetween(50, 450),
@@ -183,7 +183,7 @@ export function generateMockParachuteData(): ParachuteData {
   const forceDanger = Math.random() > 0.85;
 
   return {
-    timestamp: new Date().toLocaleTimeString('en-GB'),
+    timestamp: new Date().toISOString(),
     state,
     parachute: state === 'DEPLOYED' ? 'DEPLOYED' : 'STOWED',
     body_position: forceDanger ? 'unstable' : bodyPositions[Math.floor(Math.random() * bodyPositions.length)],
@@ -211,8 +211,8 @@ export function generateMockParachuteData(): ParachuteData {
     ax: randomBetween(-1, 1),
     ay: randomBetween(-1, 1),
     az: randomBetween(-9.8 - 2, -9.8 + 2), // Gravity base
-    gx: randomBetween(-5, 5),
-    gy: randomBetween(-5, 5),
-    gz: randomBetween(-5, 5),
+    pitch: randomBetween(-45, 45),
+    roll: randomBetween(-180, 180),
+    yaw: randomBetween(0, 360),
   };
 }

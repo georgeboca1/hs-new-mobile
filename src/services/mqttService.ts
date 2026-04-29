@@ -59,16 +59,16 @@ export async function connectMqtt(settings: AppSettings): Promise<void> {
         connected = false;
       });
 
-      client.on('error', (msg: string) => {
+      client.on('error', ((msg: string) => {
         console.error('[MQTT] Error:', msg);
         connected = false;
         clearTimeout(timeout);
         reject(new Error(msg));
-      });
+      }) as any);
 
-      client.on('message', (msg: {topic: string; data: string}) => {
+      client.on('message', ((msg: {topic: string; data: string}) => {
         console.log(`[MQTT DEBUG] Incoming message on ${msg.topic}:`, msg.data);
-      });
+      }) as any);
 
       console.log('[MQTT] Initiating connection...');
       client.connect();
@@ -114,7 +114,7 @@ export async function publishMqttJson(topic: string, payload: object): Promise<b
 export function subscribeMqtt(topic: string): void {
   if (client && connected) {
     console.log('[MQTT] Subscribing to:', topic);
-    client.subscribe(topic, 0);
+    (client as any).subscribe?.(topic, 0);
   } else {
     console.warn('[MQTT] Cannot subscribe: not connected');
   }
@@ -161,6 +161,8 @@ export async function waitForMqttMessage(
       }
     };
 
-    client.on('message', handler);
+    if (client) {
+      client.on('message', handler as any);
+    }
   });
 }

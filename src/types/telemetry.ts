@@ -38,9 +38,9 @@ export interface ParachuteData {
   ax?: number;
   ay?: number;
   az?: number;
-  gx?: number;
-  gy?: number;
-  gz?: number;
+  pitch?: number;
+  roll?: number;
+  yaw?: number;
   [key: string]: string | number | boolean | undefined;
 }
 

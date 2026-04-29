@@ -56,4 +56,4 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export const SYNC_INTERVAL_MS = 20000;
-export const MOCK_INTERVAL_MS = 1200;
+export const MOCK_INTERVAL_MS = 100;

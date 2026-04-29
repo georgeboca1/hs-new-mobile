@@ -27,6 +27,7 @@ interface TelemetryState {
   telemetryRunning: boolean;
   latestEsp: EspData | null;
   latestParachute: ParachuteData | null;
+  latestMotion: Partial<ParachuteData> | null;
   risk: RiskAssessment;
   espHistory: EspData[];
   logs: AppLog[];
@@ -45,9 +46,32 @@ interface TelemetryState {
 let mockTimer: ReturnType<typeof setInterval> | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let netUnsubscribe: (() => void) | null = null;
+let mockGeneration = 0;
 
 function trimHistory(history: EspData[]): EspData[] {
   return history.slice(Math.max(history.length - 120, 0));
+}
+
+type MotionField = 'pitch' | 'roll' | 'yaw' | 'ax' | 'ay' | 'az';
+
+const MOTION_FIELDS: MotionField[] = ['pitch', 'roll', 'yaw', 'ax', 'ay', 'az'];
+
+function extractMotionTelemetry(payload: EspData | ParachuteData): Partial<ParachuteData> | null {
+  const motion: Partial<ParachuteData> = {};
+
+  for (const field of MOTION_FIELDS) {
+    const value = payload[field];
+    if (value !== undefined) {
+      motion[field] = Number(value);
+    }
+  }
+
+  if (Object.keys(motion).length === 0) {
+    return null;
+  }
+
+  motion.timestamp = String(payload.timestamp ?? new Date().toISOString());
+  return motion;
 }
 
 async function appendLog(level: 'info' | 'warn' | 'error', message: string, context = ''): Promise<void> {
@@ -59,46 +83,56 @@ async function ingestTelemetry(kind: TelemetryKind, payload: EspData | Parachute
 
   console.log('[Store] Ingesting telemetry:', {kind, timestamp: payload.timestamp});
 
-  await queueTelemetry(kind, payload);
+  const motionTelemetry = extractMotionTelemetry(payload);
+  
+  useTelemetryStore.setState(state => {
+    const nextState: Partial<TelemetryState> = {};
 
-  if (kind === 'esp') {
-    const espPayload = payload as EspData;
-    console.log('[Store] Updating ESP data:', espPayload);
-    useTelemetryStore.setState(state => ({
-      // Merge with previous state to preserve fields not in the partial update
-      latestEsp: state.latestEsp ? {...state.latestEsp, ...espPayload} : espPayload,
-      espHistory: trimHistory([...state.espHistory, espPayload]),
-    }));
-  }
-
-  if (kind === 'parachute') {
-    const parachutePayload = payload as ParachuteData;
-    const risk = evaluateRisk(parachutePayload);
-    console.log('[Store] Updating parachute data:', {
-      timestamp: parachutePayload.timestamp,
-      shouldAlert: risk.shouldAlert,
-    });
-    useTelemetryStore.setState(state => ({
-      // Merge with previous state to preserve fields not in the partial update
-      latestParachute: state.latestParachute ? {...state.latestParachute, ...parachutePayload} : parachutePayload,
-      risk,
-    }));
-
-    if (risk.shouldAlert) {
-      await queueAlert({
-        timestamp: parachutePayload.timestamp || new Date().toISOString(),
-        risk,
-        parachute: parachutePayload,
-        esp: store.latestEsp,
-      });
-      await appendLog('warn', 'Automatic alert queued', JSON.stringify(risk.reasons));
-      
-      // Trigger the high-priority UI alert (sound, popup, cooldown)
-      triggerDangerAlert(risk, parachutePayload, store.settings).catch(err => {
-        console.error('[Store] Alert trigger failed:', err);
-      });
+    if (motionTelemetry) {
+      nextState.latestMotion = state.latestMotion ? {...state.latestMotion, ...motionTelemetry} : motionTelemetry;
     }
-  }
+
+    if (kind === 'esp') {
+      const espPayload = payload as EspData;
+      nextState.latestEsp = state.latestEsp ? {...state.latestEsp, ...espPayload} : espPayload;
+      nextState.espHistory = trimHistory([...state.espHistory, espPayload]);
+    }
+
+    if (kind === 'parachute') {
+      const parachutePayload = payload as ParachuteData;
+      const risk = evaluateRisk(parachutePayload);
+      nextState.latestParachute = state.latestParachute ? {...state.latestParachute, ...parachutePayload} : parachutePayload;
+      nextState.risk = risk;
+      
+      // If parachute packet contains system data (like cpu_load, voltage), also update history
+      // This ensures charts in the Telemetry tab keep working even if packets are classified as parachute
+      if (parachutePayload.cpu_load !== undefined || parachutePayload.voltage !== undefined) {
+        nextState.espHistory = trimHistory([...state.espHistory, parachutePayload as unknown as EspData]);
+      }
+      
+      // Secondary effects inside setState are usually avoided, but risk assessment triggers alerts
+      if (risk.shouldAlert) {
+        queueAlert({
+          timestamp: parachutePayload.timestamp || new Date().toISOString(),
+          risk,
+          parachute: parachutePayload,
+          esp: state.latestEsp,
+        }).catch(console.error);
+        
+        triggerDangerAlert(risk, parachutePayload, state.settings).catch(err => {
+          console.error('[Store] Alert trigger failed:', err);
+        });
+      }
+    }
+
+    return nextState;
+  });
+
+  // Persist to database in the background to avoid blocking the high-frequency ingestion loop.
+  // This is critical for maintaining responsive UI and 3D model updates.
+  queueTelemetry(kind, payload).catch(err => {
+    console.error('[Store] Database persistence failed:', err);
+  });
 }
 
 async function runSingleMockCycle(): Promise<void> {
@@ -107,7 +141,7 @@ async function runSingleMockCycle(): Promise<void> {
     return;
   }
 
-  const sharedTimestamp = new Date().toLocaleTimeString('en-GB'); // e.g. "14:20:04"
+  const sharedTimestamp = new Date().toISOString();
 
   const espData = generateMockEspData();
   const parachuteData = generateMockParachuteData();
@@ -116,6 +150,7 @@ async function runSingleMockCycle(): Promise<void> {
   espData.timestamp = sharedTimestamp;
   parachuteData.timestamp = sharedTimestamp;
 
+  // Await telemetry ingestion to ensure the mock loop doesn't outpace processing
   await ingestTelemetry('esp', espData);
   await ingestTelemetry('parachute', parachuteData);
 }
@@ -126,6 +161,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
   telemetryRunning: false,
   latestEsp: null,
   latestParachute: null,
+  latestMotion: null,
   risk: INITIAL_RISK,
   espHistory: [],
   logs: [],
@@ -189,10 +225,26 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
 
     if (settings.useMockData) {
       await appendLog('info', 'Starting mock telemetry stream');
-      mockTimer = setInterval(() => {
-        runSingleMockCycle().catch(() => undefined);
-      }, MOCK_INTERVAL_MS);
       await runSingleMockCycle();
+      const generation = ++mockGeneration;
+
+      const scheduleNextMockCycle = (): void => {
+        if (generation !== mockGeneration) {
+          return;
+        }
+
+        mockTimer = setTimeout(() => {
+          runSingleMockCycle()
+            .then(() => {
+              scheduleNextMockCycle();
+            })
+            .catch(() => {
+              scheduleNextMockCycle();
+            });
+        }, MOCK_INTERVAL_MS);
+      };
+
+      scheduleNextMockCycle();
       set({telemetryRunning: true});
       return;
     }
@@ -234,8 +286,10 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
   },
 
   stopMonitoring: async () => {
+    mockGeneration += 1;
+
     if (mockTimer) {
-      clearInterval(mockTimer);
+      clearTimeout(mockTimer);
       mockTimer = null;
     }
 
@@ -287,6 +341,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       logs: [],
       latestEsp: null,
       latestParachute: null,
+      latestMotion: null,
       risk: INITIAL_RISK,
     });
     await appendLog('info', 'Database and history cleared by user');
@@ -298,8 +353,10 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
 }));
 
 export function disposeTelemetryStore(): void {
+  mockGeneration += 1;
+
   if (mockTimer) {
-    clearInterval(mockTimer);
+    clearTimeout(mockTimer);
     mockTimer = null;
   }
 

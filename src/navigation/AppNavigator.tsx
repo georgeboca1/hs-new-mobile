@@ -6,19 +6,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { GraphsScreen } from '../screens/GraphsScreen';
+import {MotionScreen} from '../screens/MotionScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { useTelemetryStore } from '../store/useTelemetryStore';
 import { appNavigationThemeDark, appNavigationThemeLight, AppColors, useAppColors } from '../theme/colors';
 
 export type RootTabsParamList = {
   Dashboard: undefined;
+  Motion: undefined;
   Telemetry: undefined;
   Settings: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabsParamList>();
 
-type TabIconName = 'dashboard' | 'graphs' | 'settings';
+type TabIconName = 'dashboard' | 'motion' | 'graphs' | 'settings';
 
 function TabIcon({ name, color, size }: { name: TabIconName; color: string; size: number }) {
   if (name === 'dashboard') {
@@ -42,6 +44,16 @@ function TabIcon({ name, color, size }: { name: TabIconName; color: string; size
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+      </Svg>
+    );
+  }
+
+  if (name === 'motion') {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Circle cx="12" cy="12" r="8" stroke={color} strokeWidth={2} />
+        <Path d="M12 6V12L16.5 14.5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M8 18L17 9" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
       </Svg>
     );
   }
@@ -124,6 +136,10 @@ function GraphsTabBarIcon({ color, size }: { color: string; size: number }): Rea
   return <TabIcon name="graphs" color={color} size={size} />;
 }
 
+function MotionTabBarIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
+  return <TabIcon name="motion" color={color} size={size} />;
+}
+
 function SettingsTabBarIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
   return <TabIcon name="settings" color={color} size={size} />;
 }
@@ -132,6 +148,7 @@ const tabIconByRoute: {
   [K in keyof RootTabsParamList]: (props: { color: string; size: number }) => React.JSX.Element;
 } = {
   Dashboard: DashboardTabBarIcon,
+  Motion: MotionTabBarIcon,
   Telemetry: GraphsTabBarIcon,
   Settings: SettingsTabBarIcon,
 };
@@ -166,6 +183,7 @@ export function AppNavigator(): React.JSX.Element {
           tabBarIcon: tabIconByRoute[route.name],
         })}>
         <Tab.Screen name="Dashboard" component={DashboardScreen} />
+        <Tab.Screen name="Motion" component={MotionScreen} />
         <Tab.Screen name="Telemetry" component={GraphsScreen} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>

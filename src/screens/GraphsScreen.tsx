@@ -242,8 +242,17 @@ export function GraphsScreen(): React.JSX.Element {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const history = useTelemetryStore(state => state.espHistory);
   const latestEsp = useTelemetryStore(state => state.latestEsp);
+  const latestParachute = useTelemetryStore(state => state.latestParachute);
   const settings = useTelemetryStore(state => state.settings);
   const { width } = useWindowDimensions();
+
+  const combinedPayload = useMemo(() => {
+    if (!latestEsp && !latestParachute) return null;
+    return {
+      ...(latestEsp || {}),
+      ...(latestParachute || {}),
+    };
+  }, [latestEsp, latestParachute]);
 
   const espParameters = useMemo(
     () =>
@@ -267,15 +276,15 @@ export function GraphsScreen(): React.JSX.Element {
   );
 
   const telemetryRows = useMemo(
-    () => buildTelemetryRows(latestEsp),
-    [latestEsp],
+    () => buildTelemetryRows(combinedPayload),
+    [combinedPayload],
   );
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>System Telemetry</Text>
-        {latestEsp ? (
+        {combinedPayload ? (
           telemetryRows.length > 0 ? (
             telemetryRows.map(row => (
               <Row

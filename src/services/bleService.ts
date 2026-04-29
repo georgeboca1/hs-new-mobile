@@ -13,6 +13,7 @@ import {
   normalizePacketParameterSchemas,
   normalizeTelemetryPayload,
   normalizePartialTelemetryPayload,
+  normalizeBlePayload,
 } from './packetParser';
 import {accumulatePartialPacket, clearAccumulatedBuffers} from './partialPacketAccumulator';
 
@@ -112,11 +113,13 @@ function handleCharacteristicValue(
   // All telemetry objects should go through the accumulator to ensure fields
   // from multiple partial JSON messages are correctly merged.
   if (typeof payload === 'object' && payload !== null && !Array.isArray(payload)) {
+    const normalizedPayload = normalizeBlePayload(payload as Record<string, unknown>);
     accumulatePartialPacket(
       undefined, // Let accumulator auto-detect the kind
-      payload as Record<string, unknown>,
+      normalizedPayload,
       onPacket,
       normalizePartialTelemetryPayload,
+      characteristic.uuid,
     );
   } else {
     onLog('warn', 'BLE payload is not an object', `type: ${typeof payload}`);

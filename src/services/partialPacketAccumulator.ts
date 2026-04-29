@@ -9,7 +9,7 @@ interface PartialBuffer {
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
 
-const PARTIAL_PACKET_TIMEOUT_MS = 1000; // Flush partial packets if no updates for 1 second
+const PARTIAL_PACKET_TIMEOUT_MS = 50; // Flush partial packets after a short delay if no more fields arrive
 const buffers: Map<TelemetryKind | 'unknown', PartialBuffer> = new Map();
 
 /**
@@ -25,7 +25,7 @@ function mergePartialUpdate(
   return {
     ...accumulated,
     ...partial,
-  };
+  } as Partial<EspData | ParachuteData>;
 }
 
 /**
@@ -90,20 +90,22 @@ function flushBuffer(
  * @param partialData The partial fields received
  * @param callback The callback to invoke when packet is ready to emit
  * @param normalizer A function to normalize and validate the accumulated data
+ * @param sourceId Optional identifier for the source (e.g. characteristic UUID) to prevent collision in 'unknown' state
  */
 export function accumulatePartialPacket(
   kind: TelemetryKind | undefined,
   partialData: Record<string, unknown>,
   callback: PacketCallback,
   normalizer: (data: Partial<EspData | ParachuteData>) => ParsedPacket | null,
+  sourceId?: string,
 ): void {
   // Determine which buffer to use
-  const bufferKey = kind || 'unknown';
+  const bufferKey = kind || (sourceId ? `unknown-${sourceId}` : 'unknown');
   let buffer = buffers.get(bufferKey);
 
   if (!buffer) {
     buffer = {
-      kind: bufferKey,
+      kind: kind || 'unknown',
       accumulated: {},
       lastUpdateTime: Date.now(),
       timeoutHandle: null,
@@ -120,7 +122,7 @@ export function accumulatePartialPacket(
     if (!kind) {
       // We determined the kind! Move the data from 'unknown' to the specific kind buffer
       clearBufferTimeout(buffer);
-      buffers.delete('unknown');
+      buffers.delete(bufferKey);
       
       // Accumulate in the correct kind buffer
       accumulatePartialPacket(packet.kind, buffer.accumulated, callback, normalizer);

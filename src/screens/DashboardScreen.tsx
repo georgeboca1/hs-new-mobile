@@ -68,7 +68,15 @@ export function DashboardScreen(): React.JSX.Element {
     triggerSync,
   } = useTelemetryStore();
 
-  const dashboardRows = buildDashboardRows(latestEsp || latestParachute);
+  const combinedPayload = useMemo(() => {
+    if (!latestEsp && !latestParachute) return null;
+    return {
+      ...(latestEsp || {}),
+      ...(latestParachute || {}),
+    };
+  }, [latestEsp, latestParachute]);
+
+  const dashboardRows = buildDashboardRows(combinedPayload);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>

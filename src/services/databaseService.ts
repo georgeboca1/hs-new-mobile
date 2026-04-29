@@ -1,5 +1,5 @@
 import SQLite from 'react-native-sqlite-storage';
-import { AlertRow, AppLog, EspData, QueueRow, TelemetryKind } from '../types/telemetry';
+import { AlertRow, AppLog, EspData, ParachuteData, QueueRow, TelemetryKind } from '../types/telemetry';
 
 SQLite.enablePromise(true);
 
@@ -15,6 +15,43 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
 
   return dbInstance;
 }
+
+const TELEMETRY_COLUMNS = [
+  'state',
+  'parachute',
+  'body_position',
+  'heart_rate',
+  'SpO2',
+  'temp',
+  'temp_ext',
+  'stress_level',
+  'is_pulse_stable',
+  'vertical_speed',
+  'rotation',
+  'g_force',
+  'battery_pct',
+  'voltage',
+  'current_ma',
+  'consumed_mah',
+  'battery_life_min',
+  'power_state',
+  'cpu_load',
+  'risk_score',
+  'flags',
+  'alert_active',
+  'pitch',
+  'roll',
+  'yaw',
+  'ax',
+  'ay',
+  'az',
+];
+
+/**
+ * In-memory cache of the latest telemetry state to avoid expensive DB reads
+ * for every single high-frequency packet.
+ */
+let lastTelemetryRow: Record<string, any> | null = null;
 
 export async function initializeDatabase(): Promise<void> {
   const db = await getDb();
@@ -44,7 +81,13 @@ export async function initializeDatabase(): Promise<void> {
       cpu_load REAL,
       risk_score REAL,
       flags INTEGER,
-      alert_active INTEGER
+      alert_active INTEGER,
+      pitch REAL,
+      roll REAL,
+      yaw REAL,
+      ax REAL,
+      ay REAL,
+      az REAL
     )`,
   );
 
@@ -68,32 +111,28 @@ export async function initializeDatabase(): Promise<void> {
   );
 
   await db.executeSql('CREATE INDEX IF NOT EXISTS idx_alerts_synced ON alerts_queue(synced)');
+
+  // Simple migration: Check if new columns exist, and add them if they don't
+  try {
+    const [results] = await db.executeSql('PRAGMA table_info(telemetry_history)');
+    const existingCols = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      existingCols.push(results.rows.item(i).name);
+    }
+
+    for (const col of TELEMETRY_COLUMNS) {
+      if (!existingCols.includes(col)) {
+        console.log(`[DB] Migrating: Adding missing column ${col} to telemetry_history`);
+        // Note: SQLite ALTER TABLE ADD COLUMN is limited but fine for simple numeric/text types
+        const type = ['state', 'parachute', 'body_position', 'power_state'].includes(col) ? 'TEXT' : 'REAL';
+        await db.executeSql(`ALTER TABLE telemetry_history ADD COLUMN ${col} ${type}`);
+      }
+    }
+  } catch (err) {
+    console.error('[DB] Schema migration failed:', err);
+  }
 }
 
-const TELEMETRY_COLUMNS = [
-  'state',
-  'parachute',
-  'body_position',
-  'heart_rate',
-  'SpO2',
-  'temp',
-  'temp_ext',
-  'stress_level',
-  'is_pulse_stable',
-  'vertical_speed',
-  'rotation',
-  'g_force',
-  'battery_pct',
-  'voltage',
-  'current_ma',
-  'consumed_mah',
-  'battery_life_min',
-  'power_state',
-  'cpu_load',
-  'risk_score',
-  'flags',
-  'alert_active',
-];
 
 /**
  * Safely extracts a value from a database row by case-insensitive column name
@@ -125,40 +164,51 @@ export async function storeTelemetry(payload: EspData | ParachuteData): Promise<
       return;
     }
 
-    // 1. Try to fetch existing data for THIS timestamp
-    const [existingResult] = await db.executeSql(
-      'SELECT * FROM telemetry_history WHERE timestamp = ?',
-      [timestamp],
-    );
-
     let baseData: Record<string, any> = {};
     let isUpdate = false;
 
-    if (existingResult.rows.length > 0) {
-      // We have existing data for this exact timestamp
+    // 1. Try to get base data from memory cache or DB
+    if (lastTelemetryRow && lastTelemetryRow.timestamp === timestamp) {
+      // Same timestamp (partial update for same record)
+      baseData = { ...lastTelemetryRow };
       isUpdate = true;
-      const row = existingResult.rows.item(0);
-      TELEMETRY_COLUMNS.forEach(col => {
-        baseData[col] = getRowValue(row, col);
-      });
     } else {
-      // New timestamp. Inherit from the most recent previous row.
-      const [lastRowResult] = await db.executeSql(
-        'SELECT * FROM telemetry_history WHERE timestamp < ? ORDER BY timestamp DESC LIMIT 1',
+      // Different timestamp.
+      // Check if we already have this specific timestamp in DB (could be a delayed partial)
+      const [existingResult] = await db.executeSql(
+        'SELECT * FROM telemetry_history WHERE timestamp = ?',
         [timestamp],
       );
 
-      if (lastRowResult.rows.length > 0) {
-        const row = lastRowResult.rows.item(0);
-        console.log(`[DB] Inheriting for ${timestamp} from ${row.timestamp}`);
+      if (existingResult.rows.length > 0) {
+        isUpdate = true;
+        const row = existingResult.rows.item(0);
         TELEMETRY_COLUMNS.forEach(col => {
           baseData[col] = getRowValue(row, col);
         });
+      } else if (lastTelemetryRow && lastTelemetryRow.timestamp < timestamp) {
+        // Optimization: inherit from the in-memory cache if it's the immediate predecessor
+        baseData = { ...lastTelemetryRow };
+        console.log(`[DB] Inheriting for ${timestamp} from cache (${lastTelemetryRow.timestamp})`);
       } else {
-        // First row ever
-        TELEMETRY_COLUMNS.forEach(col => {
-          baseData[col] = null;
-        });
+        // Fallback: search DB for most recent previous row
+        const [lastRowResult] = await db.executeSql(
+          'SELECT * FROM telemetry_history WHERE timestamp < ? ORDER BY timestamp DESC LIMIT 1',
+          [timestamp],
+        );
+
+        if (lastRowResult.rows.length > 0) {
+          const row = lastRowResult.rows.item(0);
+          console.log(`[DB] Inheriting for ${timestamp} from DB (${row.timestamp})`);
+          TELEMETRY_COLUMNS.forEach(col => {
+            baseData[col] = getRowValue(row, col);
+          });
+        } else {
+          // First row ever
+          TELEMETRY_COLUMNS.forEach(col => {
+            baseData[col] = null;
+          });
+        }
       }
     }
 
@@ -183,6 +233,9 @@ export async function storeTelemetry(payload: EspData | ParachuteData): Promise<
       `INSERT OR REPLACE INTO telemetry_history (${cols}) VALUES (${placeholders})`,
       values,
     );
+    
+    // Update cache
+    lastTelemetryRow = { ...baseData, timestamp };
 
     console.log(`[DB] ${isUpdate ? 'Updated' : 'Stored'} telemetry for ${timestamp}. Merged keys:`, 
       Object.keys(params).filter(k => TELEMETRY_COLUMNS.includes(k))

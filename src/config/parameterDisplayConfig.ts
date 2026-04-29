@@ -23,6 +23,12 @@ export const DASHBOARD_PARAMETERS: ParameterDisplay[] = [
   { key: 'vertical_speed', label: 'Vertical Speed', unit: 'm/s' },
   { key: 'rotation', label: 'Rotation Rate', unit: 'dps' },
   { key: 'g_force', label: 'G-Force', unit: 'G' },
+  { key: 'pitch', label: 'Pitch', unit: '°' },
+  { key: 'roll', label: 'Roll', unit: '°' },
+  { key: 'yaw', label: 'Yaw', unit: '°' },
+  { key: 'ax', label: 'Accel X', unit: 'G' },
+  { key: 'ay', label: 'Accel Y', unit: 'G' },
+  { key: 'az', label: 'Accel Z', unit: 'G' },
 ];
 
 export const TELEMETRY_PARAMETERS: ParameterDisplay[] = [
@@ -36,6 +42,9 @@ export const TELEMETRY_PARAMETERS: ParameterDisplay[] = [
   { key: 'risk_score', label: 'Risk Score' },
   { key: 'alert_active', label: 'Alert Active' },
   { key: 'temp_ext', label: 'External Temperature', unit: '°C' },
+  { key: 'ax', label: 'Accel X', unit: 'G' },
+  { key: 'ay', label: 'Accel Y', unit: 'G' },
+  { key: 'az', label: 'Accel Z', unit: 'G' },
 ];
 
 /**

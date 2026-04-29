@@ -177,11 +177,85 @@ function normalizeEspPartialData(payload: Record<string, unknown>): Partial<EspD
     normalized.batteryPercentage = Number(batteryPctVal);
   }
 
+  // IMU / orientation fields may arrive on ESP packets as well.
+  assignNumberField(normalized, payload, 'ax', ['ax', 'accel_x', 'accelX']);
+  assignNumberField(normalized, payload, 'ay', ['ay', 'accel_y', 'accelY']);
+  assignNumberField(normalized, payload, 'az', ['az', 'accel_z', 'accelZ']);
+  assignNumberField(normalized, payload, 'gx', ['gx', 'gyro_x', 'gyroX']);
+  assignNumberField(normalized, payload, 'gy', ['gy', 'gyro_y', 'gyroY']);
+  assignNumberField(normalized, payload, 'gz', ['gz', 'gyro_z', 'gyroZ']);
+
+  const pitchVal = getValue(payload, ['pitch', 'p']);
+  if (pitchVal !== undefined) {
+    normalized.pitch = Number(pitchVal);
+  }
+
+  const rollVal = getValue(payload, ['roll', 'r']);
+  if (rollVal !== undefined) {
+    normalized.roll = Number(rollVal);
+  }
+
+  const yawVal = getValue(payload, ['yaw', 'y']);
+  if (yawVal !== undefined) {
+    normalized.yaw = Number(yawVal);
+  }
+
   // State
   assignStringField(normalized, payload, 'state', ['state', 's']);
   assignStringField(normalized, payload, 'power_state', ['power_state', 'powerState', 'pw']);
 
   return normalized as Partial<EspData>;
+}
+
+/**
+ * Normalizes a raw BLE payload by mapping shorthand keys to canonical names.
+ * This is used before accumulation to prevent "stale alias shadowing" in the buffer.
+ */
+export function normalizeBlePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...payload };
+
+  const mappings: Record<string, string[]> = {
+    timestamp: ['ts', 't'],
+    pitch: ['p'],
+    roll: ['r'],
+    yaw: ['y'],
+    ax: ['accel_x', 'accelX'],
+    ay: ['accel_y', 'accelY'],
+    az: ['accel_z', 'accelZ'],
+    gx: ['gyro_x', 'gyroX'],
+    gy: ['gyro_y', 'gyroY'],
+    gz: ['gyro_z', 'gyroZ'],
+    state: ['s'],
+    chuteOpened: ['co'],
+    stress_level: ['sl'],
+    body_position: ['pos', 'bp'],
+    heart_rate: ['hr', 'h'],
+    SpO2: ['o', 'spo2'],
+    vertical_speed: ['vs'],
+    g_force: ['g'],
+    altitude: ['alt', 'a'],
+    battery_pct: ['bat', 'b'],
+    voltage: ['v'],
+    current_ma: ['c'],
+    consumed_mah: ['m', 'mah'],
+    risk_score: ['rs'],
+    alert_active: ['aa'],
+    is_pulse_stable: ['ps'],
+    movementIndex: ['mi'],
+    flags: ['f'],
+  };
+
+  for (const [target, sources] of Object.entries(mappings)) {
+    for (const source of sources) {
+      if (payload[source] !== undefined) {
+        normalized[target] = payload[source];
+        // Do not delete the source key yet as it might be needed for other lookups,
+        // but by ensuring target is set, we prioritize the latest update.
+      }
+    }
+  }
+
+  return normalized;
 }
 
 function normalizeParachutePartialData(payload: Record<string, unknown>): Partial<ParachuteData> {
@@ -192,7 +266,7 @@ function normalizeParachutePartialData(payload: Record<string, unknown>): Partia
 
   // Flight State & Parachute
   assignStringField(normalized, payload, 'state', ['state', 's']);
-  assignStringField(normalized, payload, 'parachute', ['parachute', 'p']);
+  assignStringField(normalized, payload, 'parachute', ['parachute']); // Removed 'p' to resolve conflict with 'pitch'
 
   const positionSource = getValue(payload, ['body_position', 'bodyPosition', 'pos', 'bp']);
   if (positionSource !== undefined) {
@@ -250,7 +324,7 @@ function normalizeParachutePartialData(payload: Record<string, unknown>): Partia
   }
   
   // Rotation
-  const rotVal = getValue(payload, ['rotation', 'rotation_rate', 'rotationRate', 'r']);
+  const rotVal = getValue(payload, ['rotation', 'rotation_rate', 'rotationRate']);
   if (rotVal !== undefined) {
     normalized.rotation = Number(rotVal);
     normalized.rotationRate = Number(rotVal);
@@ -295,6 +369,23 @@ function normalizeParachutePartialData(payload: Record<string, unknown>): Partia
   const alertVal = getValue(payload, ['alert_active', 'alertActive', 'aa']);
   if (alertVal !== undefined) {
     normalized.alert_active = typeof alertVal === 'boolean' ? alertVal : String(alertVal).toLowerCase() === 'true';
+  }
+
+  // Orientation Data - map shorthand real-time orientation keys if present
+  // Maps p -> pitch, r -> roll, y -> yaw (matching dashboard behavior)
+  const pitchVal = getValue(payload, ['pitch', 'p']);
+  if (pitchVal !== undefined) {
+    normalized.pitch = Number(pitchVal);
+  }
+
+  const rollVal = getValue(payload, ['roll', 'r']);
+  if (rollVal !== undefined) {
+    normalized.roll = Number(rollVal);
+  }
+
+  const yawVal = getValue(payload, ['yaw', 'y']);
+  if (yawVal !== undefined) {
+    normalized.yaw = Number(yawVal);
   }
 
   return normalized as Partial<ParachuteData>;
@@ -355,7 +446,6 @@ function looksLikeParachuteData(payload: Record<string, unknown>): boolean {
     'vs' in payload ||
     'rotation' in payload ||
     'rotation_rate' in payload ||
-    'r' in payload ||
     'stress_level' in payload ||
     'stressLevel' in payload ||
     'sl' in payload ||
@@ -365,13 +455,37 @@ function looksLikeParachuteData(payload: Record<string, unknown>): boolean {
     'state' in payload ||
     's' in payload ||
     'parachute' in payload ||
-    'p' in payload ||
     'chute_opened' in payload ||
     'co' in payload ||
     'alert_active' in payload ||
     'aa' in payload ||
     'risk_score' in payload ||
-    'rs' in payload
+    'rs' in payload ||
+    'pitch' in payload ||
+    'p' in payload ||
+    'roll' in payload ||
+    'r' in payload ||
+    'yaw' in payload ||
+    'y' in payload ||
+    // IMU fields - accelerometer and gyroscope
+    'ax' in payload ||
+    'ay' in payload ||
+    'az' in payload ||
+    'accel_x' in payload ||
+    'accel_y' in payload ||
+    'accel_z' in payload ||
+    'accelX' in payload ||
+    'accelY' in payload ||
+    'accelZ' in payload ||
+    'gx' in payload ||
+    'gy' in payload ||
+    'gz' in payload ||
+    'gyro_x' in payload ||
+    'gyro_y' in payload ||
+    'gyro_z' in payload ||
+    'gyroX' in payload ||
+    'gyroY' in payload ||
+    'gyroZ' in payload
   );
 }
 
@@ -387,17 +501,17 @@ function normalizeTelemetryPacket(payload: unknown): ParsedPacket | null {
       : payload;
   const kind = String(payload.kind ?? '').trim().toLowerCase();
 
-  if (kind === 'esp' || looksLikeEspData(data)) {
-    const normalized = normalizeEspPartialData(data);
-    if (normalized.timestamp) {
-      return { kind: 'esp', payload: normalized as EspData };
-    }
-  }
-
   if (kind === 'parachute' || looksLikeParachuteData(data)) {
     const normalized = normalizeParachutePartialData(data);
     if (normalized.timestamp) {
       return { kind: 'parachute', payload: normalized as ParachuteData };
+    }
+  }
+
+  if (kind === 'esp' || looksLikeEspData(data)) {
+    const normalized = normalizeEspPartialData(data);
+    if (normalized.timestamp) {
+      return { kind: 'esp', payload: normalized as EspData };
     }
   }
 
@@ -483,22 +597,28 @@ export function normalizePartialTelemetryPayload(partial: Record<string, unknown
     return null;
   }
 
-  // Try to determine the kind based on which fields we have
-  if (looksLikeEspData(partial)) {
-    const normalized = normalizeEspPartialData(partial);
-    if (normalized.timestamp) {
-      return { kind: 'esp', payload: normalized as EspData };
-    }
-  }
+  // Generate a timestamp if one is not present
+  const withTimestamp = {
+    ...partial,
+    timestamp: partial.timestamp || partial.ts || partial.t || new Date().toISOString(),
+  };
 
-  if (looksLikeParachuteData(partial)) {
-    const normalized = normalizeParachutePartialData(partial);
+  // Try to determine the kind based on which fields we have
+  if (looksLikeParachuteData(withTimestamp)) {
+    const normalized = normalizeParachutePartialData(withTimestamp);
     if (normalized.timestamp) {
       return { kind: 'parachute', payload: normalized as ParachuteData };
     }
   }
 
-  // If we can't determine the kind yet or don't have a timestamp, return null
+  if (looksLikeEspData(withTimestamp)) {
+    const normalized = normalizeEspPartialData(withTimestamp);
+    if (normalized.timestamp) {
+      return { kind: 'esp', payload: normalized as EspData };
+    }
+  }
+
+  // If we can't determine the kind, return null
   return null;
 }
 

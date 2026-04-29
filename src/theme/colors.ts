@@ -15,7 +15,7 @@ export const darkColors = {
   success: '#63F7C8',
   danger: '#FF6BAA',
   inputBackground: '#0F1112',
-} as const;
+};
 
 export const lightColors = {
   background: '#F8FAFC',
@@ -31,7 +31,7 @@ export const lightColors = {
   success: '#10B981',
   danger: '#EF4444',
   inputBackground: '#F1F5F9',
-} as const;
+};
 
 export type AppColors = typeof darkColors;
 
