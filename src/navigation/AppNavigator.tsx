@@ -1,14 +1,14 @@
-import React, {useMemo} from 'react';
-import {NavigationContainer} from '@react-navigation/native';
-import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
-import {Pressable, StyleSheet} from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import Svg, {Circle, Line, Path, Polyline, Rect} from 'react-native-svg';
-import {DashboardScreen} from '../screens/DashboardScreen';
-import {GraphsScreen} from '../screens/GraphsScreen';
-import {SettingsScreen} from '../screens/SettingsScreen';
-import {useTelemetryStore} from '../store/useTelemetryStore';
-import {appNavigationThemeDark, appNavigationThemeLight, AppColors, useAppColors} from '../theme/colors';
+import React, { useMemo } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Pressable, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
+import { DashboardScreen } from '../screens/DashboardScreen';
+import { GraphsScreen } from '../screens/GraphsScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
+import { useTelemetryStore } from '../store/useTelemetryStore';
+import { appNavigationThemeDark, appNavigationThemeLight, AppColors, useAppColors } from '../theme/colors';
 
 export type RootTabsParamList = {
   Dashboard: undefined;
@@ -20,7 +20,7 @@ const Tab = createBottomTabNavigator<RootTabsParamList>();
 
 type TabIconName = 'dashboard' | 'graphs' | 'settings';
 
-function TabIcon({name, color, size}: {name: TabIconName; color: string; size: number}) {
+function TabIcon({ name, color, size }: { name: TabIconName; color: string; size: number }) {
   if (name === 'dashboard') {
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -61,7 +61,7 @@ function TabIcon({name, color, size}: {name: TabIconName; color: string; size: n
   );
 }
 
-function MonitoringIcon({isRunning, color}: {isRunning: boolean; color: string}) {
+function MonitoringIcon({ isRunning, color }: { isRunning: boolean; color: string }) {
   return (
     <Svg width={18} height={18} viewBox="0 0 18 18" fill="none">
       {isRunning ? (
@@ -116,20 +116,20 @@ function MonitoringHeaderButton(): React.JSX.Element {
   );
 }
 
-function DashboardTabBarIcon({color, size}: {color: string; size: number}): React.JSX.Element {
+function DashboardTabBarIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
   return <TabIcon name="dashboard" color={color} size={size} />;
 }
 
-function GraphsTabBarIcon({color, size}: {color: string; size: number}): React.JSX.Element {
+function GraphsTabBarIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
   return <TabIcon name="graphs" color={color} size={size} />;
 }
 
-function SettingsTabBarIcon({color, size}: {color: string; size: number}): React.JSX.Element {
+function SettingsTabBarIcon({ color, size }: { color: string; size: number }): React.JSX.Element {
   return <TabIcon name="settings" color={color} size={size} />;
 }
 
 const tabIconByRoute: {
-  [K in keyof RootTabsParamList]: (props: {color: string; size: number}) => React.JSX.Element;
+  [K in keyof RootTabsParamList]: (props: { color: string; size: number }) => React.JSX.Element;
 } = {
   Dashboard: DashboardTabBarIcon,
   Telemetry: GraphsTabBarIcon,
@@ -148,7 +148,7 @@ export function AppNavigator(): React.JSX.Element {
     <NavigationContainer theme={navTheme}>
       <Tab.Navigator
         initialRouteName="Dashboard"
-        screenOptions={({route}) => ({
+        screenOptions={({ route }) => ({
           headerStyle: styles.header,
           headerTitleStyle: styles.headerTitle,
           headerTintColor: colors.textPrimary,

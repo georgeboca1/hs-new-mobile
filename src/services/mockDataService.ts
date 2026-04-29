@@ -207,5 +207,12 @@ export function generateMockParachuteData(): ParachuteData {
     flags: randomInt(0, 255),
     alert_active: Math.random() > 0.9,
     movementIndex: forceDanger ? randomBetween(0, 0.04) : randomBetween(0.1, 0.9),
+    // Mock IMU Data
+    ax: randomBetween(-1, 1),
+    ay: randomBetween(-1, 1),
+    az: randomBetween(-9.8 - 2, -9.8 + 2), // Gravity base
+    gx: randomBetween(-5, 5),
+    gy: randomBetween(-5, 5),
+    gz: randomBetween(-5, 5),
   };
 }

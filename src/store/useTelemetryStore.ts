@@ -15,7 +15,7 @@ import {
 import {startBleIngestion, stopBleIngestion} from '../services/bleService';
 import {exportLogsToShareSheet} from '../services/logExportService';
 import {generateMockEspData, generateMockParachuteData} from '../services/mockDataService';
-import {evaluateRisk} from '../services/riskEngine';
+import {evaluateRisk, INITIAL_RISK} from '../services/riskEngine';
 import {triggerDangerAlert} from '../services/alertService';
 import {loadSettings, saveSettings} from '../services/settingsService';
 import {syncNow} from '../services/syncService';
@@ -27,7 +27,7 @@ interface TelemetryState {
   telemetryRunning: boolean;
   latestEsp: EspData | null;
   latestParachute: ParachuteData | null;
-  risk: RiskAssessment | null;
+  risk: RiskAssessment;
   espHistory: EspData[];
   logs: AppLog[];
   internetConnected: boolean;
@@ -126,7 +126,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
   telemetryRunning: false,
   latestEsp: null,
   latestParachute: null,
-  risk: null,
+  risk: INITIAL_RISK,
   espHistory: [],
   logs: [],
   internetConnected: false,
@@ -287,7 +287,7 @@ export const useTelemetryStore = create<TelemetryState>((set, get) => ({
       logs: [],
       latestEsp: null,
       latestParachute: null,
-      risk: null,
+      risk: INITIAL_RISK,
     });
     await appendLog('info', 'Database and history cleared by user');
   },

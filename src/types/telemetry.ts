@@ -35,6 +35,12 @@ export interface ParachuteData {
   risk_score?: number;
   flags?: number;
   alert_active?: boolean;
+  ax?: number;
+  ay?: number;
+  az?: number;
+  gx?: number;
+  gy?: number;
+  gz?: number;
   [key: string]: string | number | boolean | undefined;
 }
 

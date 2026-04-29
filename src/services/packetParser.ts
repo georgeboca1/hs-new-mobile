@@ -284,6 +284,14 @@ function normalizeParachutePartialData(payload: Record<string, unknown>): Partia
   assignNumberField(normalized, payload, 'risk_score', ['risk_score', 'riskScore', 'rs']);
   assignNumberField(normalized, payload, 'flags', ['flags', 'f']);
 
+  // IMU Data
+  assignNumberField(normalized, payload, 'ax', ['ax', 'accel_x', 'accelX']);
+  assignNumberField(normalized, payload, 'ay', ['ay', 'accel_y', 'accelY']);
+  assignNumberField(normalized, payload, 'az', ['az', 'accel_z', 'accelZ']);
+  assignNumberField(normalized, payload, 'gx', ['gx', 'gyro_x', 'gyroX']);
+  assignNumberField(normalized, payload, 'gy', ['gy', 'gyro_y', 'gyroY']);
+  assignNumberField(normalized, payload, 'gz', ['gz', 'gyro_z', 'gyroZ']);
+
   const alertVal = getValue(payload, ['alert_active', 'alertActive', 'aa']);
   if (alertVal !== undefined) {
     normalized.alert_active = typeof alertVal === 'boolean' ? alertVal : String(alertVal).toLowerCase() === 'true';

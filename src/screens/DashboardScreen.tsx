@@ -104,53 +104,51 @@ export function DashboardScreen(): React.JSX.Element {
         )}
       </View>
 
-      {risk ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Detailed Risk Assessment</Text>
-          
-          <View style={styles.riskScoreContainer}>
-            <View style={styles.riskScoreCircle}>
-              <Text style={styles.riskScoreValue}>{risk.accidentRiskScore}</Text>
-              <Text style={styles.riskScoreLabel}>RISK SCORE</Text>
-            </View>
-            <View style={styles.riskStatusContainer}>
-               <View style={[styles.statusBadge, risk.shouldAlert ? styles.statusBadgeDanger : styles.statusBadgeSafe]}>
-                  <Text style={styles.statusBadgeText}>{risk.shouldAlert ? 'DANGER' : 'SAFE'}</Text>
-               </View>
-               <Text style={styles.riskSummaryText}>
-                 {risk.reasons.length > 0 
-                   ? `${risk.reasons.length} threats detected` 
-                   : 'All systems nominal'}
-               </Text>
-            </View>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Detailed Risk Assessment</Text>
+        
+        <View style={styles.riskScoreContainer}>
+          <View style={styles.riskScoreCircle}>
+            <Text style={styles.riskScoreValue}>{risk.accidentRiskScore}</Text>
+            <Text style={styles.riskScoreLabel}>RISK SCORE</Text>
           </View>
-
-          <View style={styles.divider} />
-
-          <Text style={styles.sectionTitle}>Dangerous Situations</Text>
-          <View style={styles.statusGrid}>
-            <StatusIndicator label="Uncontrolled Fall" active={risk.uncontrolledFall} colors={colors} />
-            <StatusIndicator label="Excessive Rotation" active={risk.excessiveRotation} colors={colors} />
-            <StatusIndicator label="Inactivity / Fall" active={risk.lackOfMovement} colors={colors} />
+          <View style={styles.riskStatusContainer}>
+             <View style={[styles.statusBadge, risk.shouldAlert ? styles.statusBadgeDanger : styles.statusBadgeSafe]}>
+                <Text style={styles.statusBadgeText}>{risk.shouldAlert ? 'DANGER' : 'SAFE'}</Text>
+             </View>
+             <Text style={styles.riskSummaryText}>
+               {risk.reasons.length > 0 
+                 ? `${risk.reasons.length} threats detected` 
+                 : 'All systems nominal'}
+             </Text>
           </View>
-
-          <Text style={styles.sectionTitle}>Physiological Analysis</Text>
-          <View style={styles.statusGrid}>
-            <StatusIndicator label="Abnormal Pulse" active={risk.abnormalHeartRate} colors={colors} />
-            <StatusIndicator label="Critical Stress" active={risk.highStress} colors={colors} />
-            <StatusIndicator label="Abnormal Behavior" active={risk.abnormalAirBehavior} colors={colors} />
-          </View>
-
-          {risk.reasons.length > 0 && (
-            <View style={styles.reasonsContainer}>
-              <Text style={styles.reasonsTitle}>Detailed Alerts:</Text>
-              {risk.reasons.map((reason, i) => (
-                <Text key={i} style={styles.reasonItem}>• {reason}</Text>
-              ))}
-            </View>
-          )}
         </View>
-      ) : null}
+
+        <View style={styles.divider} />
+
+        <Text style={styles.sectionTitle}>Dangerous Situations</Text>
+        <View style={styles.statusGrid}>
+          <StatusIndicator label="Uncontrolled Fall" active={risk.uncontrolledFall} colors={colors} />
+          <StatusIndicator label="Excessive Rotation" active={risk.excessiveRotation} colors={colors} />
+          <StatusIndicator label="Inactivity / Fall" active={risk.lackOfMovement} colors={colors} />
+        </View>
+
+        <Text style={styles.sectionTitle}>Physiological Analysis</Text>
+        <View style={styles.statusGrid}>
+          <StatusIndicator label="Abnormal Pulse" active={risk.abnormalHeartRate} colors={colors} />
+          <StatusIndicator label="Critical Stress" active={risk.highStress} colors={colors} />
+          <StatusIndicator label="Abnormal Behavior" active={risk.abnormalAirBehavior} colors={colors} />
+        </View>
+
+        {risk.reasons.length > 0 && (
+          <View style={styles.reasonsContainer}>
+            <Text style={styles.reasonsTitle}>Detailed Alerts:</Text>
+            {risk.reasons.map((reason, i) => (
+              <Text key={i} style={styles.reasonItem}>• {reason}</Text>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }

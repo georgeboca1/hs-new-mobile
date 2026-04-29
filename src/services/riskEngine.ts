@@ -41,6 +41,18 @@ function asString(value: unknown, fallback = ''): string {
   return fallback;
 }
 
+export const INITIAL_RISK: RiskAssessment = {
+  uncontrolledFall: false,
+  excessiveRotation: false,
+  lackOfMovement: false,
+  abnormalHeartRate: false,
+  highStress: false,
+  abnormalAirBehavior: false,
+  accidentRiskScore: 0,
+  shouldAlert: false,
+  reasons: [],
+};
+
 export function evaluateRisk(data: ParachuteData): RiskAssessment {
   // Extract parameters with fallbacks, supporting both snake_case and camelCase
   const verticalSpeed = asNumber(data.vertical_speed ?? data.verticalSpeed, 0);
